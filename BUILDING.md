@@ -4,8 +4,10 @@
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| JDK  | 17+ (21 recommended) | sdkman: `sdk install java 21-amzn` |
+| JDK  | 21 (required by IntelliJ Platform 2024.3+; the LSP itself only needs 17+) | sdkman: `sdk install java 21-amzn` |
 | sbt  | 1.10+ | sdkman: `sdk install sbt` |
+| Node / npm | 20+ | VSCode extension only |
+| Gradle | 8.8 (bundled via `./gradlew`) | IntelliJ plugin only |
 
 ## Build the LSP fat jar
 
@@ -13,10 +15,11 @@
 sbt lsp/assembly
 ```
 
-Output path is configured in `build.sbt`'s `assembly / assemblyOutputPath` — currently
-`extensions/intellij/src/main/resources/bin/zio-bdd-lsp.jar`, anticipating the IntelliJ plugin
-that will bundle it (not yet implemented; see README's "Status" section). If you just want the
-jar without that directory existing, override the output path or create the directory first.
+Output path is configured in `build.sbt`'s `assembly / assemblyOutputPath` —
+`extensions/intellij/src/main/resources/bin/zio-bdd-lsp.jar`, since the IntelliJ plugin bundles
+it. Building the IntelliJ plugin requires this jar to exist first; the VSCode extension doesn't
+bundle it (the extension looks for it at `zio-bdd.lspBinaryPath`, on `PATH`, or falls back to an
+error — see `extension.ts`'s `resolveLspLaunch`).
 
 ## Run against an unreleased zio-bdd core change
 
@@ -44,6 +47,45 @@ java -jar lsp/target/scala-3.3.4/zio-bdd-lsp.jar
 
 It speaks LSP over stdio (Content-Length-framed JSON-RPC) and logs to stderr — stdout is
 reserved for protocol traffic.
+
+## Build the VSCode extension
+
+```sh
+cd extensions/vscode
+npm install
+npm run compile        # -> out/extension.js
+npx vsce package --allow-missing-repository   # -> zio-bdd-0.1.0.vsix
+```
+
+Install the `.vsix` via VSCode's "Install from VSIX..." command, or `code --install-extension
+zio-bdd-0.1.0.vsix`. The extension looks for the LSP at, in order: `zio-bdd.lspBinaryPath`
+setting, a bundled `bin/zio-bdd-lsp(.jar)` next to the extension (not currently packaged into
+the `.vsix` — copy `lsp/target/.../zio-bdd-lsp.jar` to `extensions/vscode/bin/` first if you
+want a self-contained install), then `zio-bdd-lsp` on `PATH`.
+
+## Build the IntelliJ plugin
+
+```sh
+sbt lsp/assembly   # must run first — build.gradle.kts checks the jar exists
+cd extensions/intellij
+./gradlew buildPlugin   # -> build/distributions/zio-bdd-intellij-0.9.0.zip
+```
+
+Install via IntelliJ → Settings → Plugins → ⚙ → Install Plugin from Disk, pointing at the
+generated zip. Requires the [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin
+(declared as a dependency in `plugin.xml`; IntelliJ will prompt to install it if missing).
+
+By default `build.gradle.kts` resolves IntelliJ Community 2024.3 and LSP4IJ 0.20.1 from
+JetBrains' CDN/Marketplace — no local IDE install needed. To build against a local IDE sandbox
+instead (e.g. no CDN access, or testing an unreleased IDE/plugin version), pass:
+
+```sh
+./gradlew buildPlugin -PzioBdd.intellij.localPath="/Applications/IntelliJ IDEA.app" \
+                       -PzioBdd.intellij.localLsp4ijPath=/path/to/unpacked/lsp4ij
+```
+
+Verified end-to-end in this repo: `./gradlew buildPlugin verifyPluginStructure
+verifyPluginProjectConfiguration` all pass clean against the CDN defaults above.
 
 ## Tests
 

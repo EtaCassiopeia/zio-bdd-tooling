@@ -1,6 +1,6 @@
 # zio-bdd-tooling
 
-LSP server (and, eventually, VSCode/IntelliJ clients) for
+LSP server, VSCode extension, and IntelliJ plugin for
 [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) — the Scala 3 + ZIO 2 BDD test framework.
 
 Implements [zio-bdd#93](https://github.com/EtaCassiopeia/zio-bdd/issues/93)'s LSP/CLI/IDE
@@ -14,16 +14,26 @@ This repo currently has:
 - **`lsp/`** — a working Scala 3 LSP server (diagnostics, go-to-definition, hover, completion,
   document outline, code lens) that statically scans `.scala`/`.feature` source text — no `sbt
   compile` required, feedback within ~1s of saving a file.
+- **`extensions/vscode/`** — a VSCode extension: Gherkin syntax highlighting, LSP client,
+  Test Explorer integration, and the commands the LSP's code lenses invoke.
+- **`extensions/intellij/`** — an IntelliJ plugin: Gherkin syntax highlighting + customisable
+  colour scheme, wired to the LSP via the [LSP4IJ](https://github.com/redhat-developer/lsp4ij)
+  client plugin (not a from-scratch PSI implementation — see "Deferred" below).
 
 Not yet implemented (tracked as follow-ups against zio-bdd#93, deliberately deferred — see that
 issue's M2/M3 phasing):
 
-- VSCode extension, IntelliJ plugin (the `extensions/` clients this LSP is meant to power).
 - CLI (`zio-bdd check`/`snippet`/`list`).
-- GraalVM native-image distribution.
+- GraalVM native-image distribution — both extensions currently launch the LSP via
+  `java -jar zio-bdd-lsp.jar` rather than a standalone binary.
 - SemanticDB/BSP-aware resolution (would let the LSP reuse zio-bdd's actual runtime
   `StepRegistry` instead of a static approximation — requires loading compiled user classes).
-- Native IntelliJ PSI plugin.
+- Native IntelliJ PSI plugin (own lexer/parser/index walking Scala PSI directly, per #93's
+  original architecture decision) — using the generic LSP4IJ client instead is far less work
+  and was judged good enough for now; revisit if its run/debug/refactor support proves limiting.
+- Run configurations / gutter run icons / "generate step registry" action for IntelliJ —
+  the LSP4IJ-based plugin currently only does syntax highlighting + the LSP-provided features
+  (diagnostics, completion, hover, definition, code lens via the generic LSP4IJ UI).
 
 ## Design note: no hand-copied extractor patterns
 
@@ -60,8 +70,28 @@ zio-bdd-tooling/
 │       │       └── DocumentSymbolsHandler.scala
 │       └── test/scala/zio/bdd/lsp/
 │           ├── StepExtractorSpec.scala
-│           └── StepMatcherSpec.scala
-└── extensions/                        # not yet implemented — see "Status"
+│           ├── StepMatcherSpec.scala
+│           └── handlers/CodeLensHandlerSpec.scala
+└── extensions/
+    ├── vscode/                        # TypeScript VSCode extension
+    │   ├── src/
+    │   │   ├── extension.ts           # LSP client + activation
+    │   │   ├── commands.ts            # generateRegistry, restart, showOutput
+    │   │   └── testController.ts      # VSCode Test Explorer
+    │   ├── syntaxes/gherkin.tmLanguage.json
+    │   ├── package.json
+    │   └── tsconfig.json
+    └── intellij/                      # Kotlin IntelliJ plugin (LSP4IJ-based)
+        ├── build.gradle.kts
+        ├── settings.gradle.kts
+        ├── gradlew / gradlew.bat
+        └── src/main/
+            ├── kotlin/zio/bdd/intellij/
+            │   ├── ZioBddLspServerDefinition.kt
+            │   └── lang/                # FileType, Lexer, SyntaxHighlighter, ColorSettingsPage
+            └── resources/
+                ├── META-INF/plugin.xml
+                └── bin/zio-bdd-lsp.jar  ← produced by `sbt lsp/assembly`
 ```
 
 ## How it works
@@ -87,6 +117,8 @@ sbt lsp/test
 By default the LSP depends on the latest released `io.github.etacassiopeia:zio-bdd` /
 `zio-bdd-gherkin` artifacts. To develop against an unreleased zio-bdd core change, run `sbt
 publishLocal` in a zio-bdd checkout and pass `-DzioBdd.version=<printed-version>` to sbt here.
+
+See [BUILDING.md](BUILDING.md) for the VSCode extension and IntelliJ plugin build steps.
 
 ## Tests
 

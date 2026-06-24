@@ -1,0 +1,87 @@
+{
+  "name": "zio-bdd",
+  "displayName": "zio-bdd",
+  "description": "IDE support for zio-bdd Scala BDD test framework — syntax highlighting, go-to-definition, diagnostics, completion, and run configurations for .feature files.",
+  "version": "0.1.0",
+  "publisher": "zio-bdd",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Testing", "Programming Languages"],
+  "activationEvents": [
+    "workspaceContains:**/*.feature",
+    "onLanguage:gherkin"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "gherkin",
+        "aliases": ["Gherkin", "Feature"],
+        "extensions": [".feature"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gherkin",
+        "scopeName": "text.gherkin.ziobdd",
+        "path": "./syntaxes/gherkin.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "zio-bdd.generateRegistry",
+        "title": "zio-bdd: Generate Step Registry",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "zio-bdd.runCommand",
+        "title": "zio-bdd: Run sbt Command"
+      },
+      {
+        "command": "zio-bdd.restartServer",
+        "title": "zio-bdd: Restart Language Server"
+      },
+      {
+        "command": "zio-bdd.showOutput",
+        "title": "zio-bdd: Show Output Channel"
+      }
+    ],
+    "configuration": {
+      "title": "zio-bdd",
+      "properties": {
+        "zio-bdd.lspBinaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the zio-bdd-lsp binary. Leave empty to use the bundled binary."
+        },
+        "zio-bdd.sbtCommand": {
+          "type": "string",
+          "default": "sbt",
+          "description": "sbt command to use for running tests (e.g. './sbtx' or 'sbt -J-Xmx4g')."
+        },
+        "zio-bdd.logLevel": {
+          "type": "string",
+          "enum": ["off", "error", "warn", "info", "debug"],
+          "default": "info",
+          "description": "LSP server log verbosity."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./tsconfig.json && esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "tsc -watch -p ./tsconfig.json",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^2.26.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

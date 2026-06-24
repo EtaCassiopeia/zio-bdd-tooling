@@ -1,0 +1,57 @@
+<idea-plugin>
+    <id>zio.bdd</id>
+    <name>zio-bdd</name>
+    <vendor>zio-bdd</vendor>
+
+    <description><![CDATA[
+        IDE support for the zio-bdd Scala 3 / ZIO 2 BDD test framework.<br/>
+        Owns <code>.feature</code> files — does not require the Gherkin plugin.<br/>
+        <ul>
+            <li>Syntax highlighting for <code>.feature</code> files (keywords, tags, <code>@flags</code>, doc strings, tables)</li>
+            <li>Customisable colour scheme — Settings → Editor → Color Scheme → zio-bdd Gherkin</li>
+            <li>Go-to-definition: Cmd+Click a step → jump to its Scala source</li>
+            <li>Diagnostics: missing step definitions highlighted with closest-match hints</li>
+            <li>Autocomplete: step suggestions with typed parameter tab stops</li>
+            <li>Hover: parameter types and descriptions for matched steps</li>
+        </ul>
+        Powered by a self-contained Scala LSP server — no compile step required.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+
+    <!-- Platform extensions -->
+    <extensions defaultExtensionNs="com.intellij">
+
+        <fileType name="Gherkin Feature"
+                  implementationClass="zio.bdd.intellij.lang.ZioBddFileType"
+                  fieldName="INSTANCE"
+                  language="ZioBddGherkin"
+                  extensions="feature"/>
+
+        <lang.syntaxHighlighterFactory
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddSyntaxHighlighterFactory"/>
+
+        <colorSettingsPage
+                implementation="zio.bdd.intellij.lang.ZioBddColorSettingsPage"/>
+
+    </extensions>
+
+    <!--
+      LSP server registration — uses the lsp4ij namespace.
+      MUST NOT live inside defaultExtensionNs="com.intellij" or the IDE
+      will look for `com.intellij.com.redhat.devtools.lsp4ij.server` and silently fail.
+    -->
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+
+        <server id="zio.bdd.lsp"
+                name="zio-bdd LSP"
+                factoryClass="zio.bdd.intellij.ZioBddLspServerDefinition"/>
+
+        <fileNamePatternMapping serverId="zio.bdd.lsp"
+                                patterns="*.feature"/>
+
+    </extensions>
+
+</idea-plugin>
