@@ -1,0 +1,31 @@
+target
+test-output/
+.sbtopts
+.bsp
+project/.sbt
+.bloop
+.metals
+metals.sbt
+*/metals.sbt
+.idea
+coursier
+.DS_Store
+project/metals.sbt
+project/project/metals.sbt
+sbt.json
+.bsp/
+project/project/
+*.iml
+.vscode
+*.asc
+
+# VSCode extension build output / packaged artifacts
+extensions/vscode/node_modules/
+extensions/vscode/out/
+extensions/vscode/*.vsix
+
+# IntelliJ plugin build output
+extensions/intellij/.gradle/
+extensions/intellij/build/
+extensions/intellij/src/main/resources/bin/
+!extensions/intellij/gradle/wrapper/gradle-wrapper.jar
