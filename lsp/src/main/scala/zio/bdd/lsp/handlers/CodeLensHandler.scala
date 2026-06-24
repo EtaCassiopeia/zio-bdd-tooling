@@ -34,17 +34,23 @@ object CodeLensHandler:
   private def featureLens(feature: Feature, path: String): CodeLens =
     val line    = toLsp(feature.line)
     val command = new Command("▶ Run feature", "zio-bdd.runCommand")
-    command.setArguments(List[Object](runCommand(s"""--feature-file "$path"""")).asJava)
+    command.setArguments(List[Object](runCommand(s"--feature-file ${shellQuote(path)}")).asJava)
     new CodeLens(lineRange(line), command, null)
 
   private def scenarioLens(scenario: Scenario, path: String): CodeLens =
-    val line        = toLsp(scenario.line)
-    val command     = new Command("▶ Run scenario", "zio-bdd.runCommand")
-    val escapedName = scenario.name.replace("\"", "\\\"")
+    val line    = toLsp(scenario.line)
+    val command = new Command("▶ Run scenario", "zio-bdd.runCommand")
     command.setArguments(
-      List[Object](runCommand(s"""--feature-file "$path" --scenario-name "$escapedName"""")).asJava
+      List[Object](
+        runCommand(s"--feature-file ${shellQuote(path)} --scenario-name ${shellQuote(scenario.name)}")
+      ).asJava
     )
     new CodeLens(lineRange(line), command, null)
+
+  // The whole sbt argument is wrapped in double quotes (runCommand), so individual
+  // flag values must use single quotes — nesting double quotes inside double quotes
+  // breaks the shell's parsing of the outer argument.
+  private def shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
   private def runCommand(flags: String): String =
     s"""sbt "testOnly * -- $flags""""
