@@ -14,7 +14,25 @@ ThisBuild / scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked")
 // `-DzioBdd.version=<local-snapshot>` to build against an unreleased core change.
 val zioBddVersion = sys.props.getOrElse("zioBdd.version", "1.0.0")
 
+// ─── GraalVM native-image flags ──────────────────────────────────────────────
+// Used by both `lsp` and `cli` when NativeImagePlugin is active.
+// Requires GraalVM JDK 21 on PATH. The reflect-config at
+// lsp/src/main/resources/META-INF/native-image/.../reflect-config.json covers
+// the lsp4j JSON-RPC adapter classes that Gson instantiates reflectively.
+val nativeImageFlags = List(
+  "--no-fallback",
+  "--initialize-at-build-time",
+  "-H:+ReportExceptionStackTraces",
+  // lsp4j adapter classes use Gson TypeAdapterFactory with reflective construction;
+  // defer their initialisation to run time so Gson can wire them up normally.
+  "--initialize-at-run-time=" +
+    "org.eclipse.lsp4j.jsonrpc.json.adapters.CollectionTypeAdapter" +
+    ",org.eclipse.lsp4j.jsonrpc.json.adapters.EitherTypeAdapter" +
+    ",org.eclipse.lsp4j.jsonrpc.json.adapters.JsonElementTypeAdapter"
+)
+
 lazy val lsp = (project in file("lsp"))
+  .enablePlugins(NativeImagePlugin)
   .settings(
     name := "zio-bdd-lsp",
     libraryDependencies ++= Seq(
@@ -47,10 +65,13 @@ lazy val lsp = (project in file("lsp"))
     assembly / assemblyOutputPath := {
       baseDirectory.value / ".." / "extensions" / "intellij" / "src" / "main" / "resources" / "bin" / "zio-bdd-lsp.jar"
     },
+    nativeImageOptions ++= nativeImageFlags,
+    nativeImageOutput  := (ThisBuild / baseDirectory).value / "bin" / "zio-bdd-lsp",
   )
 
 lazy val cli = (project in file("cli"))
   .dependsOn(lsp)
+  .enablePlugins(NativeImagePlugin)
   .settings(
     name := "zio-bdd-cli",
     libraryDependencies ++= Seq(
@@ -68,37 +89,9 @@ lazy val cli = (project in file("cli"))
       case PathList("reference.conf")           => MergeStrategy.concat
       case _                                    => MergeStrategy.first
     },
+    nativeImageOptions ++= nativeImageFlags,
+    nativeImageOutput  := (ThisBuild / baseDirectory).value / "bin" / "zio-bdd",
   )
-
-// ─── GraalVM native-image (optional) ───────────────────────────────────────
-//
-// Uncomment the NativeImagePlugin lines AND the plugin in project/plugins.sbt
-// when GraalVM JDK 21 is on PATH (`sdk install java 21.0.x-graal`).
-// Then run: sbt lsp/nativeImage  → bin/zio-bdd-lsp
-//           sbt cli/nativeImage  → bin/zio-bdd
-//
-// val nativeImageFlags = List(
-//   "--no-fallback",
-//   "--initialize-at-build-time",
-//   "-H:+ReportExceptionStackTraces",
-//   // LSP4J uses reflection for JSON-RPC adapter classes; defer them to run-time:
-//   "--initialize-at-run-time=" +
-//     "org.eclipse.lsp4j.jsonrpc.json.adapters.CollectionTypeAdapter" +
-//     ",org.eclipse.lsp4j.jsonrpc.json.adapters.EitherTypeAdapter" +
-//     ",org.eclipse.lsp4j.jsonrpc.json.adapters.JsonElementTypeAdapter"
-// )
-// In lazy val lsp, add:
-//   .enablePlugins(NativeImagePlugin)
-//   .settings(
-//     nativeImageOptions ++= nativeImageFlags,
-//     nativeImageOutput  := (ThisBuild / baseDirectory).value / "bin" / "zio-bdd-lsp",
-//   )
-// In lazy val cli, add:
-//   .enablePlugins(NativeImagePlugin)
-//   .settings(
-//     nativeImageOptions ++= nativeImageFlags,
-//     nativeImageOutput  := (ThisBuild / baseDirectory).value / "bin" / "zio-bdd",
-//   )
 
 lazy val root = (project in file("."))
   .aggregate(lsp, cli)
