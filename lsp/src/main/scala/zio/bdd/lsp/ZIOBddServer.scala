@@ -4,7 +4,7 @@ import org.eclipse.lsp4j.*
 import org.eclipse.lsp4j.jsonrpc.messages.Either as JEither
 import org.eclipse.lsp4j.services.*
 import zio.*
-import zio.bdd.lsp.bsp.BspClient
+import zio.bdd.lsp.bsp.{BspClassLoader, BspClient}
 import zio.bdd.lsp.handlers.*
 
 import java.lang.System as JSystem
@@ -181,8 +181,8 @@ final class ZIOBddServer(
   // its source dirs at fire time (resolves the chicken-and-egg: the callback
   // is created before the client exists, but is only ever called after).
   private def startBspClient(rootPath: String): UIO[Unit] =
-    // Compile callback: re-scan using BSP exact source roots, or fall to heuristic
-    // if BSP dirs are not yet populated (e.g. initial connect before first build).
+    // Compile callback: re-scan using BSP exact source roots, then upgrade step
+    // patterns with runtime-accurate data from the BSP class-loading subprocess.
     val onCompile: UIO[Unit] =
       bspRef.get.flatMap {
         case None => index.scanSourceRoots(rootPath, Nil)
@@ -190,6 +190,16 @@ final class ZIOBddServer(
           bsp.sourceDirs.flatMap { dirs =>
             ZIO.logInfo(s"BSP compile — re-scanning ${dirs.size} source root(s)") *>
               index.scanSourceRoots(rootPath, dirs)
+          } *> bsp.testClasspath.flatMap { cp =>
+            if cp.isEmpty then ZIO.unit
+            else
+              ZIO.logInfo(s"BSP compile — loading runtime step definitions (${cp.size} cp entries)") *>
+                BspClassLoader.loadSteps(cp).flatMap { summaries =>
+                  if summaries.isEmpty then ZIO.unit
+                  else
+                    ZIO.logInfo(s"BSP class-loading: merging ${summaries.size} runtime step definitions") *>
+                      index.mergeRuntimeSteps(summaries)
+                }
           }
       }
 
