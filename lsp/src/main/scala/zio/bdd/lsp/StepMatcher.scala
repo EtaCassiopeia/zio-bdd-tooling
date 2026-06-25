@@ -28,10 +28,41 @@ object StepMatcher:
       case Some(d) => MatchResult.Matched(d)
       case None    => MatchResult.NoMatch(closest(text, defs))
 
-  /** True if the step text matches the definition's compiled pattern. */
+  private val colPlaceholder = """\<(\w+)\>""".r
+
+  /**
+   * True if the step text matches the definition.
+   *
+   * Two strategies:
+   *  1. Regex match — the normal case for concrete step text.
+   *  2. Structural match — for Scenario Outline steps that still contain
+   *     `<col>` placeholders (not yet substituted from the Examples table).
+   *     Mirrors `StepExpression.structuralMatch`: literal segments must align
+   *     and the placeholder count must equal the extractor count.
+   */
   def matches(text: String, defn: StepDefinition): Boolean =
-    try JPattern.compile(defn.pattern).matcher(text).matches()
-    catch case _: Exception => false
+    if colPlaceholder.findFirstIn(text).isDefined then structuralMatch(text, defn)
+    else
+      try JPattern.compile(defn.pattern).matcher(text).matches()
+      catch case _: Exception => false
+
+  private def structuralMatch(template: String, defn: StepDefinition): Boolean =
+    val tTokens = tokenizeTemplate(template)
+    val pLiterals = defn.literals
+    val pExtractors = defn.extractors
+    val tLiterals = tTokens.collect { case Left(s) => s }
+    val tPlaceholders = tTokens.collect { case Right(s) => s }
+    tLiterals == pLiterals && tPlaceholders.length == pExtractors.length
+
+  private def tokenizeTemplate(text: String): List[Either[String, String]] =
+    val buf = scala.collection.mutable.ListBuffer.empty[Either[String, String]]
+    var pos = 0
+    for m <- colPlaceholder.findAllMatchIn(text) do
+      if m.start > pos then buf += Left(text.substring(pos, m.start))
+      buf += Right(m.group(1))
+      pos = m.end
+    if pos < text.length then buf += Left(text.substring(pos))
+    buf.toList
 
   /**
    * Find all candidates for a given keyword, including cross-keyword fallback.

@@ -45,6 +45,34 @@ object StepMatcherSpec extends ZIOSpecDefault:
       val defs   = List(mkDef("When", "the request is sent", "^the request is sent$"))
       val result = StepMatcher.find("But", "the request is sent", defs)
       assertTrue(result.isInstanceOf[StepMatcher.MatchResult.Matched])
+    },
+    test("Scenario Outline <col> placeholder matches structurally against extractor step def") {
+      val defn = StepDefinition(
+        keyword          = "And",
+        literals         = List("the user's age is "),
+        extractors       = List(ExtractorInfo("int", "Int", """(-?\d+)""", "signed integer")),
+        displayText      = "the user's age is {int}",
+        pattern          = """^the user's age is (-?\d+)$""",
+        file             = "Steps.scala",
+        line             = 10,
+        isStateInjecting = false
+      )
+      val result = StepMatcher.find("And", "the user's age is <age>", List(defn))
+      assertTrue(result.isInstanceOf[StepMatcher.MatchResult.Matched])
+    },
+    test("mismatched placeholder count does not structurally match") {
+      val defn = StepDefinition(
+        keyword          = "Given",
+        literals         = List("a user named "),
+        extractors       = List(ExtractorInfo("string", "String", """(".*"|.*)""", "text")),
+        displayText      = "a user named {string}",
+        pattern          = """^a user named (".*"|.*)$""",
+        file             = "Steps.scala",
+        line             = 5,
+        isStateInjecting = false
+      )
+      val result = StepMatcher.find("Given", "a user named <first> <last>", List(defn))
+      assertTrue(result.isInstanceOf[StepMatcher.MatchResult.NoMatch])
     }
   )
 
