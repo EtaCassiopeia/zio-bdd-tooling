@@ -49,8 +49,59 @@ lazy val lsp = (project in file("lsp"))
     },
   )
 
+lazy val cli = (project in file("cli"))
+  .dependsOn(lsp)
+  .settings(
+    name := "zio-bdd-cli",
+    libraryDependencies ++= Seq(
+      "com.monovore" %% "decline"       % "2.4.1",
+      "dev.zio"      %% "zio-test"      % "2.1.17" % Test,
+      "dev.zio"      %% "zio-test-sbt"  % "2.1.17" % Test,
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    assembly / mainClass    := Some("zio.bdd.cli.Main"),
+    assembly / assemblyJarName := "zio-bdd-cli.jar",
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "services", _*) => MergeStrategy.concat
+      case PathList("META-INF", _*)             => MergeStrategy.discard
+      case PathList("module-info.class")        => MergeStrategy.discard
+      case PathList("reference.conf")           => MergeStrategy.concat
+      case _                                    => MergeStrategy.first
+    },
+  )
+
+// ─── GraalVM native-image (optional) ───────────────────────────────────────
+//
+// Uncomment the NativeImagePlugin lines AND the plugin in project/plugins.sbt
+// when GraalVM JDK 21 is on PATH (`sdk install java 21.0.x-graal`).
+// Then run: sbt lsp/nativeImage  → bin/zio-bdd-lsp
+//           sbt cli/nativeImage  → bin/zio-bdd
+//
+// val nativeImageFlags = List(
+//   "--no-fallback",
+//   "--initialize-at-build-time",
+//   "-H:+ReportExceptionStackTraces",
+//   // LSP4J uses reflection for JSON-RPC adapter classes; defer them to run-time:
+//   "--initialize-at-run-time=" +
+//     "org.eclipse.lsp4j.jsonrpc.json.adapters.CollectionTypeAdapter" +
+//     ",org.eclipse.lsp4j.jsonrpc.json.adapters.EitherTypeAdapter" +
+//     ",org.eclipse.lsp4j.jsonrpc.json.adapters.JsonElementTypeAdapter"
+// )
+// In lazy val lsp, add:
+//   .enablePlugins(NativeImagePlugin)
+//   .settings(
+//     nativeImageOptions ++= nativeImageFlags,
+//     nativeImageOutput  := (ThisBuild / baseDirectory).value / "bin" / "zio-bdd-lsp",
+//   )
+// In lazy val cli, add:
+//   .enablePlugins(NativeImagePlugin)
+//   .settings(
+//     nativeImageOptions ++= nativeImageFlags,
+//     nativeImageOutput  := (ThisBuild / baseDirectory).value / "bin" / "zio-bdd",
+//   )
+
 lazy val root = (project in file("."))
-  .aggregate(lsp)
+  .aggregate(lsp, cli)
   .settings(
     name           := "zio-bdd-tooling",
     publish / skip := true,

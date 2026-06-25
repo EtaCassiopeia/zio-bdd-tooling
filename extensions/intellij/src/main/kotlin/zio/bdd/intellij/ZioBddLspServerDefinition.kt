@@ -10,15 +10,17 @@ import org.eclipse.lsp4j.services.LanguageServer
 import java.io.File
 
 /**
- * Starts the bundled zio-bdd LSP server (`bin/zio-bdd-lsp.jar`) for `.feature` files.
+ * Starts the bundled zio-bdd LSP server for `.feature` files.
  *
  * Discovery order:
  *   1. JVM property `zio.bdd.lsp.binary` — absolute path override (dev only)
- *   2. The fat jar embedded at `/bin/zio-bdd-lsp.jar` — extracted to `java.io.tmpdir`
- *      on first connection and launched via the IDE's bundled JRE.
+ *   2. GraalVM native binary embedded at `/bin/zio-bdd-lsp` — extracted to tmpdir,
+ *      chmod +x, launched directly (no JVM startup overhead; produced by `make native`)
+ *   3. Fat jar embedded at `/bin/zio-bdd-lsp.jar` — extracted to tmpdir and launched
+ *      via the IDE's bundled JRE (the default shipping path)
  *
- * The IDE-bundled JRE is preferred because it is guaranteed compatible with the
- * platform we built against and avoids pulling in the user's local Java install.
+ * The IDE-bundled JRE is preferred for jar launch because it is guaranteed compatible
+ * with the platform we built against.
  */
 class ZioBddLspServerDefinition : LanguageServerFactory {
 
@@ -39,6 +41,8 @@ class ZioBddLspServerDefinition : LanguageServerFactory {
         System.getProperty("zio.bdd.lsp.binary")?.let { p ->
             if (File(p).exists()) return listOf(p)
         }
+        // Prefer native binary (no JVM startup cost); fall back to fat jar.
+        extractEmbeddedNative()?.let { native -> return listOf(native.absolutePath) }
         val jar = extractEmbeddedJar()
             ?: error(
                 "zio-bdd: bundled LSP jar (/bin/zio-bdd-lsp.jar) not found in plugin classpath. " +
@@ -46,6 +50,17 @@ class ZioBddLspServerDefinition : LanguageServerFactory {
                 "Override with -Dzio.bdd.lsp.binary=/path/to/zio-bdd-lsp.jar."
             )
         return listOf(javaExecutable(), "-jar", jar.absolutePath)
+    }
+
+    /** Extract the native binary (if bundled) to tmpdir and make it executable. */
+    private fun extractEmbeddedNative(): File? {
+        val binaryName = if (isWindows()) "zio-bdd-lsp.exe" else "zio-bdd-lsp"
+        val stream = ZioBddLspServerDefinition::class.java
+            .getResourceAsStream("/bin/$binaryName") ?: return null
+        val dest = File(System.getProperty("java.io.tmpdir"), binaryName)
+        stream.use { input -> dest.outputStream().use { input.copyTo(it) } }
+        dest.setExecutable(true)
+        return dest
     }
 
     /** Extract the embedded fat jar to a stable path in the IDE's temp dir. */

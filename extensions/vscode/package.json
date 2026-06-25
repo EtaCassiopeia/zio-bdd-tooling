@@ -4,6 +4,11 @@
   "description": "IDE support for zio-bdd Scala BDD test framework — syntax highlighting, go-to-definition, diagnostics, completion, and run configurations for .feature files.",
   "version": "0.1.0",
   "publisher": "zio-bdd",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EtaCassiopeia/zio-bdd-tooling"
+  },
+  "license": "Apache-2.0",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Testing", "Programming Languages"],
   "activationEvents": [
