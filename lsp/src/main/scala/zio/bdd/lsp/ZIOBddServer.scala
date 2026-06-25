@@ -43,7 +43,6 @@ final class ZIOBddServer(
     fireAndForget(
       ZIO.logInfo(s"initialize: rootPath=$rootPath") *>
         startBspClient(rootPath) *>
-        index.initialScan(rootPath) *>
         index.allSteps.flatMap(d => ZIO.logInfo(s"scan complete: ${d.size} step definitions indexed")) *>
         ready.succeed(()).unit
     )
@@ -182,7 +181,8 @@ final class ZIOBddServer(
   // its source dirs at fire time (resolves the chicken-and-egg: the callback
   // is created before the client exists, but is only ever called after).
   private def startBspClient(rootPath: String): UIO[Unit] =
-    // Compile callback: re-scan using the BSP-exact source roots if available.
+    // Compile callback: re-scan using BSP exact source roots, or fall to heuristic
+    // if BSP dirs are not yet populated (e.g. initial connect before first build).
     val onCompile: UIO[Unit] =
       bspRef.get.flatMap {
         case None => index.scanSourceRoots(rootPath, Nil)
@@ -192,21 +192,29 @@ final class ZIOBddServer(
               index.scanSourceRoots(rootPath, dirs)
           }
       }
+
     BspClient
       .connect(rootPath, onCompile)
       .flatMap { optClient =>
         bspRef.set(optClient) *>
           optClient.fold(
-            ZIO.logInfo("No BSP server found; using heuristic source-root discovery")
+            // No BSP server — fall back to heuristic workspace walk.
+            ZIO.logInfo("No BSP server found; using heuristic source-root discovery") *>
+              index.initialScan(rootPath)
           ) { bsp =>
+            // BSP is available: give it a moment to respond to the
+            // initialize/workspace/buildTargets round-trip, then use the exact
+            // source roots it provides.  Only if it returns nothing yet do we
+            // fall back to heuristics; the compile callback will upgrade to BSP
+            // roots once the first build completes.
             ZIO.logInfo("BSP client connected — waiting for source roots") *>
-              // Give the BSP server a moment to respond to the initialize/
-              // workspace/buildTargets round-trip before reading source dirs.
               ZIO.sleep(3.seconds) *>
               bsp.sourceDirs.flatMap { dirs =>
-                if dirs.isEmpty then ZIO.logInfo("BSP: no source roots yet; heuristic initial scan continues")
+                if dirs.isEmpty then
+                  ZIO.logInfo("BSP: no source roots yet; falling back to heuristic scan") *>
+                    index.initialScan(rootPath)
                 else
-                  ZIO.logInfo(s"BSP: updating index with ${dirs.size} exact source root(s)") *>
+                  ZIO.logInfo(s"BSP: indexing with ${dirs.size} exact source root(s) from BSP") *>
                     index.scanSourceRoots(rootPath, dirs)
               }
           }
