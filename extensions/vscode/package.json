@@ -69,8 +69,10 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./tsconfig.json && esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
-    "watch": "tsc -watch -p ./tsconfig.json",
+    "typecheck": "tsc --noEmit -p ./tsconfig.json",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "compile": "npm run typecheck && npm run bundle",
+    "watch": "npm run bundle -- --watch",
     "package": "vsce package",
     "vscode:prepublish": "npm run compile"
   },
