@@ -13,6 +13,10 @@ import scala.jdk.CollectionConverters.*
  * All mutations go through this class, which is the only thing inside the LSP
  * server allowed to write to the index Refs. Reads are non-blocking.
  */
+// A step summary produced by the BSP class-loading subprocess (StepLoader).
+// keyword/pattern/displayText mirror ZIOSteps.allDefinitions / StepSummary.
+case class RuntimeStepSummary(keyword: String, pattern: String, displayText: String)
+
 final class WorkspaceIndex private (
   stepsRef: Ref[Map[String, List[StepDefinition]]],
   featuresRef: Ref[Map[String, Feature]]
@@ -71,6 +75,39 @@ final class WorkspaceIndex private (
   // per-file key so subsequent file-change events continue to work normally.
   def updateStepsFromBsp(scalaFilePath: String, defs: List[StepDefinition]): UIO[Unit] =
     stepsRef.update(_.updated(scalaFilePath, defs))
+
+  // Upgrade static-scan step patterns with runtime-accurate versions from the
+  // BSP class-loading subprocess.  Matches by keyword + literal key (the
+  // literal text segments with extractor placeholders stripped).  Where a match
+  // is found, the `pattern` field is replaced with the runtime regex; file and
+  // line come from the static scan and are preserved unchanged.
+  def mergeRuntimeSteps(summaries: List[RuntimeStepSummary]): UIO[Unit] =
+    if summaries.isEmpty then ZIO.unit
+    else
+      val runtimeByKey = summaries.map(s => (s.keyword.toLowerCase, runtimeLiteralKey(s.displayText)) -> s).toMap
+      stepsRef.update { fileMap =>
+        fileMap.transform { (_, defs) =>
+          defs.map { sd =>
+            val key = (sd.keyword.toLowerCase, staticLiteralKey(sd.displayText))
+            runtimeByKey.get(key) match
+              case Some(rs) => sd.copy(pattern = rs.pattern)
+              case None     => sd
+          }
+        }
+      }
+
+  // Literal segments of a static-scan displayText like "the cart has {int} items"
+  // → "the cart has  items" (placeholder stripped).
+  private def staticLiteralKey(displayText: String): String =
+    displayText.replaceAll("\\{[^}]+\\}", "")
+
+  // Literal segments of a runtime displayText like `"the cart has " / <IntExtractor> / " items"`
+  // → "the cart has  items" (extractor tokens stripped, quoted strings joined).
+  private def runtimeLiteralKey(displayText: String): String =
+    displayText
+      .split(" / ")
+      .collect { case s if s.startsWith("\"") => s.stripPrefix("\"").stripSuffix("\"") }
+      .mkString
 
   /** Returns (scalaPaths, featurePaths). Empty lists if root is missing. */
   private def collectFiles(root: Path): (List[String], List[String]) =

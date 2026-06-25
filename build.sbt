@@ -75,9 +75,12 @@ lazy val cli = (project in file("cli"))
   .settings(
     name := "zio-bdd-cli",
     libraryDependencies ++= Seq(
-      "com.monovore" %% "decline"       % "2.4.1",
-      "dev.zio"      %% "zio-test"      % "2.1.17" % Test,
-      "dev.zio"      %% "zio-test-sbt"  % "2.1.17" % Test,
+      "com.monovore"        %% "decline"    % "2.4.1",
+      // ClassGraph: discovers ZIOSteps subclasses on the test classpath at runtime.
+      // Only used in StepLoader (the BSP class-loading subprocess).
+      "io.github.classgraph" % "classgraph" % "4.8.179",
+      "dev.zio"             %% "zio-test"   % "2.1.17" % Test,
+      "dev.zio"             %% "zio-test-sbt" % "2.1.17" % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     assembly / mainClass    := Some("zio.bdd.cli.Main"),
