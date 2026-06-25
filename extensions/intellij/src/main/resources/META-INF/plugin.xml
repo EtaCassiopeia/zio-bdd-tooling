@@ -75,6 +75,10 @@
         <projectService
                 serviceImplementation="zio.bdd.intellij.lang.ZioBddStepCache"/>
 
+        <!-- ── Invalidate step cache when .scala files change ────────────── -->
+        <projectActivity
+                implementation="zio.bdd.intellij.lang.ZioBddFileChangeListener"/>
+
     </extensions>
 
     <!--
