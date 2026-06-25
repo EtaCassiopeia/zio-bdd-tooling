@@ -66,26 +66,25 @@ want a self-contained install), then `zio-bdd-lsp` on `PATH`.
 ## Build the IntelliJ plugin
 
 ```sh
-sbt lsp/assembly   # must run first — build.gradle.kts checks the jar exists
+sbt lsp/assembly   # must run first — build.gradle.kts verifies the jar exists
 cd extensions/intellij
 ./gradlew buildPlugin   # -> build/distributions/zio-bdd-intellij-0.9.0.zip
 ```
 
 Install via IntelliJ → Settings → Plugins → ⚙ → Install Plugin from Disk, pointing at the
-generated zip. Requires the [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin
-(declared as a dependency in `plugin.xml`; IntelliJ will prompt to install it if missing).
+generated zip. **No external plugins are required** — the plugin uses native PSI and has no
+dependency on LSP4IJ or any other third-party plugin.
 
-By default `build.gradle.kts` resolves IntelliJ Community 2024.3 and LSP4IJ 0.20.1 from
-JetBrains' CDN/Marketplace — no local IDE install needed. To build against a local IDE sandbox
-instead (e.g. no CDN access, or testing an unreleased IDE/plugin version), pass:
+By default `build.gradle.kts` resolves IntelliJ Community 2024.3 from JetBrains' CDN — no
+local IDE install needed. To build against a local IDE sandbox instead (e.g. no CDN access or
+testing against an unreleased IDE version), pass:
 
 ```sh
-./gradlew buildPlugin -PzioBdd.intellij.localPath="/Applications/IntelliJ IDEA.app" \
-                       -PzioBdd.intellij.localLsp4ijPath=/path/to/unpacked/lsp4ij
+./gradlew buildPlugin -PzioBdd.intellij.localPath="/Applications/IntelliJ IDEA.app"
 ```
 
-Verified end-to-end in this repo: `./gradlew buildPlugin verifyPluginStructure
-verifyPluginProjectConfiguration` all pass clean against the CDN defaults above.
+Verified end-to-end: `./gradlew buildPlugin verifyPluginStructure verifyPluginProjectConfiguration`
+all pass clean against the CDN defaults above.
 
 ## Tests
 
