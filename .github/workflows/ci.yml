@@ -127,7 +127,9 @@ jobs:
           echo "Resolved zio-bdd version: $VERSION"
 
       - name: Build LSP fat jar
-        run: sbt -DzioBdd.version="${ZIO_BDD_VERSION}" lsp/assembly
+        run: |
+          mkdir -p extensions/intellij/src/main/resources/bin
+          sbt -DzioBdd.version="${ZIO_BDD_VERSION}" lsp/assembly
 
       - name: Build IntelliJ plugin
         run: cd extensions/intellij && ./gradlew buildPlugin --no-daemon
