@@ -1,4 +1,4 @@
-package zio.bdd.cli
+package zio.bdd.lsp.bsp
 
 import io.github.classgraph.ClassGraph
 
@@ -7,10 +7,11 @@ import scala.jdk.CollectionConverters.*
 /**
  * Subprocess entry point for BSP class-loading (zio-bdd-tooling issue #2).
  *
- * The LSP server launches this class as a subprocess on the user's JVM test
- * classpath (plus this jar on the path):
+ * The LSP server (and the IntelliJ plugin) launch this class as a subprocess on
+ * the user's JVM test classpath, with the LSP fat jar appended so this class
+ * can be found:
  * {{{
- *   java -cp <user-test-classpath>:<zio-bdd-cli.jar> zio.bdd.cli.StepLoader
+ *   java -cp <user-test-classpath>:<zio-bdd-lsp.jar> zio.bdd.lsp.bsp.StepLoader
  * }}}
  *
  * It scans the classpath for concrete `ZIOSteps` subclasses, instantiates each
@@ -81,7 +82,9 @@ object StepLoader:
       try method.invoke(instance)
       catch
         case e: Throwable =>
-          System.err.println(s"StepLoader: ${cls.getName}.allDefinitions threw ${e.getClass.getName}: ${e.getMessage}")
+          System.err.println(
+            s"StepLoader: ${cls.getName}.allDefinitions threw ${e.getClass.getName}: ${e.getMessage}"
+          )
           return Nil
 
     // result is a scala.collection.immutable.List[StepSummary]; extract fields via reflection.

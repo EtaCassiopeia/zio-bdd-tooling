@@ -69,7 +69,7 @@ object BspClassLoader:
       "java",
       "-cp",
       cp,
-      "zio.bdd.cli.StepLoader"
+      "zio.bdd.lsp.bsp.StepLoader"
     )
     pb.redirectErrorStream(false)
     val proc = pb.start()
