@@ -139,13 +139,15 @@ function executeItem(
 }
 
 function buildSbtCommand(sbt: string, item: vscode.TestItem): string {
-  // Feature-level item: id has no "::" separator — run by file path.
-  if (!item.id.includes('::')) {
-    const featurePath = item.uri?.fsPath ?? '';
-    return `${sbt} "testOnly * -- --feature-file ${shellEscape(featurePath)}"`;
+  // Scenario-level: run only the named scenario, --focused suppresses the "IGNORED"
+  // output for every other scenario so the report only shows what actually ran.
+  if (item.id.includes('::')) {
+    return `${sbt} "testOnly * -- --scenario-name ${shellEscape(item.label)} --focused"`;
   }
-  // Scenario-level: run by name.
-  return `${sbt} "testOnly * -- --scenario-name ${shellEscape(item.label)}"`;
+  // Feature-level: run all tests; each suite loads its own configured featureDirs.
+  // Passing --feature-file would override featureDirs on every suite and cause
+  // suites whose step definitions don't match the feature to report failures.
+  return `${sbt} "testOnly * -- --focused"`;
 }
 
 function shellEscape(s: string): string {

@@ -10,6 +10,7 @@ import {
 } from 'vscode-languageclient/node';
 import { registerCommands } from './commands';
 import { registerTestController } from './testController';
+import { ScenarioExplorerProvider } from './sidebarProvider';
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.OutputChannel;
@@ -84,6 +85,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerCommands(context, client, outputChannel, statusBarItem);
   registerTestController(context, client);
+
+  // Scenario Explorer sidebar
+  const sidebar = new ScenarioExplorerProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ScenarioExplorerProvider.viewId, sidebar),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('zio-bdd.refreshSidebar', () => sidebar.refresh()),
+  );
+  const featureWatcher = vscode.workspace.createFileSystemWatcher('**/*.feature');
+  featureWatcher.onDidCreate(() => sidebar.refresh());
+  featureWatcher.onDidChange(() => sidebar.refresh());
+  featureWatcher.onDidDelete(() => sidebar.refresh());
+  context.subscriptions.push(featureWatcher);
 
   context.subscriptions.push({ dispose: () => client?.stop() });
 }

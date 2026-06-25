@@ -16,10 +16,29 @@
   "qna": "https://github.com/EtaCassiopeia/zio-bdd-tooling/discussions",
   "activationEvents": [
     "workspaceContains:**/*.feature",
-    "onLanguage:gherkin"
+    "onLanguage:gherkin",
+    "onView:zioBdd.scenarioExplorer"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zio-bdd",
+          "title": "zio-bdd",
+          "icon": "images/bdd-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "zio-bdd": [
+        {
+          "type": "webview",
+          "id": "zioBdd.scenarioExplorer",
+          "name": "Scenario Explorer"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "gherkin",
@@ -47,8 +66,22 @@
       {
         "command": "zio-bdd.showOutput",
         "title": "zio-bdd: Show Output Channel"
+      },
+      {
+        "command": "zio-bdd.refreshSidebar",
+        "title": "zio-bdd: Refresh Scenario Explorer",
+        "icon": "$(refresh)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "zio-bdd.refreshSidebar",
+          "when": "view == zioBdd.scenarioExplorer",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "zio-bdd",
       "properties": {

@@ -52,7 +52,18 @@ object StepMatcher:
     val pExtractors   = defn.extractors
     val tLiterals     = tTokens.collect { case Left(s) => s }
     val tPlaceholders = tTokens.collect { case Right(s) => s }
-    tLiterals == pLiterals && tPlaceholders.length == pExtractors.length
+    // Fast path: all extractor positions are <placeholder> tokens.
+    if tLiterals == pLiterals && tPlaceholders.length == pExtractors.length then true
+    else
+      // Mixed case: some positions have concrete values, others have <placeholder>.
+      // Replace each <placeholder> with a type-neutral value and do a regex match.
+      // Trying "0" covers int/double/long; "X" covers string/word; "true" covers boolean.
+      val neutralValues = List("0", "X", "true")
+      neutralValues.exists { v =>
+        val concrete = colPlaceholder.replaceAllIn(template, _ => v)
+        try JPattern.compile(defn.pattern).matcher(concrete).matches()
+        catch case _: Exception => false
+      }
 
   private def tokenizeTemplate(text: String): List[Either[String, String]] =
     val buf = scala.collection.mutable.ListBuffer.empty[Either[String, String]]
