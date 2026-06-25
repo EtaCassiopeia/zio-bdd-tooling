@@ -93,10 +93,10 @@ interface Launch {
 /**
  * Resolve how to start the LSP server.
  *
- * GraalVM native-image distribution (a standalone `zio-bdd-lsp` binary) is not
- * built yet (deferred — see issue #93's M3 phasing), so today this almost
- * always resolves to `java -jar .../zio-bdd-lsp.jar`. The native-binary paths
- * are checked first so this keeps working without changes once M3 ships.
+ * GraalVM native-image distribution: run `sbt lsp/nativeImage` (requires GraalVM JDK 21)
+ * to produce a standalone `zio-bdd-lsp` binary. When present, it is preferred over the
+ * fat jar — faster startup, no JVM warm-up. If no native binary is found this resolves to
+ * `java -jar .../zio-bdd-lsp.jar`.
  */
 function resolveLspLaunch(context: vscode.ExtensionContext): Launch | undefined {
   // 1. User-configured path — a native binary or a .jar, either is fine.
