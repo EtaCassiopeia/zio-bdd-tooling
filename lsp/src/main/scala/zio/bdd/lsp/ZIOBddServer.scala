@@ -4,6 +4,7 @@ import org.eclipse.lsp4j.*
 import org.eclipse.lsp4j.jsonrpc.messages.Either as JEither
 import org.eclipse.lsp4j.services.*
 import zio.*
+import zio.bdd.lsp.bsp.BspClient
 import zio.bdd.lsp.handlers.*
 
 import java.lang.System as JSystem
@@ -25,10 +26,11 @@ import scala.jdk.CollectionConverters.*
  * CompletableFuture boundary. All LSP handlers go through it.
  */
 final class ZIOBddServer(
-  index: WorkspaceIndex,
+  index:   WorkspaceIndex,
   runtime: Runtime[Any],
-  client: Ref[Option[LanguageClient]],
-  ready: Promise[Nothing, Unit]
+  client:  Ref[Option[LanguageClient]],
+  ready:   Promise[Nothing, Unit],
+  bspRef:  Ref[Option[BspClient]]
 ) extends LanguageServer
     with TextDocumentService
     with WorkspaceService:
@@ -40,6 +42,7 @@ final class ZIOBddServer(
 
     fireAndForget(
       ZIO.logInfo(s"initialize: rootPath=$rootPath") *>
+        startBspClient(rootPath) *>
         index.initialScan(rootPath) *>
         index.allSteps.flatMap(d => ZIO.logInfo(s"scan complete: ${d.size} step definitions indexed")) *>
         ready.succeed(()).unit
@@ -155,6 +158,42 @@ final class ZIOBddServer(
 
   private val contentCache = new java.util.concurrent.ConcurrentHashMap[String, String]()
 
+  // Connect to the BSP server if one is configured for `rootPath`.
+  // The client is stored in `bspRef` so the compile callback can read
+  // its source dirs at fire time (resolves the chicken-and-egg: the callback
+  // is created before the client exists, but is only ever called after).
+  private def startBspClient(rootPath: String): UIO[Unit] =
+    // Compile callback: re-scan using the BSP-exact source roots if available.
+    val onCompile: UIO[Unit] =
+      bspRef.get.flatMap {
+        case None      => index.scanSourceRoots(rootPath, Nil)
+        case Some(bsp) =>
+          bsp.sourceDirs.flatMap { dirs =>
+            ZIO.logInfo(s"BSP compile — re-scanning ${dirs.size} source root(s)") *>
+              index.scanSourceRoots(rootPath, dirs)
+          }
+      }
+    BspClient
+      .connect(rootPath, onCompile)
+      .flatMap { optClient =>
+        bspRef.set(optClient) *>
+          optClient.fold(
+            ZIO.logInfo("No BSP server found; using heuristic source-root discovery")
+          ) { bsp =>
+            ZIO.logInfo("BSP client connected — waiting for source roots") *>
+              // Give the BSP server a moment to respond to the initialize/
+              // workspace/buildTargets round-trip before reading source dirs.
+              ZIO.sleep(3.seconds) *>
+              bsp.sourceDirs.flatMap { dirs =>
+                if dirs.isEmpty then
+                  ZIO.logInfo("BSP: no source roots yet; heuristic initial scan continues")
+                else
+                  ZIO.logInfo(s"BSP: updating index with ${dirs.size} exact source root(s)") *>
+                    index.scanSourceRoots(rootPath, dirs)
+              }
+          }
+      }
+
   private def currentContent(uri: String): String =
     Option(contentCache.get(uri)).getOrElse("")
 
@@ -246,5 +285,6 @@ object ZIOBddServer:
         rt     <- ZIO.runtime[Any]
         client <- Ref.make(Option.empty[LanguageClient])
         ready  <- Promise.make[Nothing, Unit]
-      yield ZIOBddServer(index, rt, client, ready)
+        bspRef <- Ref.make(Option.empty[BspClient])
+      yield ZIOBddServer(index, rt, client, ready, bspRef)
     }
