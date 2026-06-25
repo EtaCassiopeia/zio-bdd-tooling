@@ -1,0 +1,222 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# Uses the same publishLocal SNAPSHOT pattern as ci.yml — see the comment at the
+# top of that file. Once zio-bdd tags v1.0.1+, replace with a pinned version.
+
+jobs:
+  # ── Build LSP jar + both extensions ─────────────────────────────────────────
+  build:
+    name: Build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout zio-bdd
+        uses: actions/checkout@v4
+        with:
+          repository: EtaCassiopeia/zio-bdd
+          fetch-depth: 0
+          path: .zio-bdd-src
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install sbt
+        uses: sbt/setup-sbt@v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Cache sbt / Coursier
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.cache/coursier
+          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/build.properties', 'project/*.sbt', '.zio-bdd-src/build.sbt') }}
+          restore-keys: ${{ runner.os }}-sbt-
+
+      - name: Cache Gradle wrapper + caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/wrapper
+            ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('extensions/intellij/**/*.gradle.kts', 'extensions/intellij/**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Publish zio-bdd locally and capture version
+        run: |
+          cd .zio-bdd-src
+          sbt publishLocal 2>&1 | tee /tmp/zio-bdd-publish.log
+          VERSION=$(grep -oP '(?<=io\.github\.etacassiopeia/zio-bdd_3/)[^/]+(?=/ivys)' /tmp/zio-bdd-publish.log | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: could not extract zio-bdd version from publishLocal output"
+            exit 1
+          fi
+          echo "ZIO_BDD_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved zio-bdd version: $VERSION"
+
+      - name: Set release version from tag
+        run: |
+          RELEASE_VERSION="${GITHUB_REF_NAME#v}"
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          # Stamp VS Code package.json
+          node -e "
+            const fs = require('fs');
+            const p  = JSON.parse(fs.readFileSync('extensions/vscode/package.json'));
+            p.version = '${RELEASE_VERSION}';
+            fs.writeFileSync('extensions/vscode/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          # Stamp IntelliJ build.gradle.kts
+          sed -i "s/^version = \"[^\"]*\"/version = \"${RELEASE_VERSION}\"/" extensions/intellij/build.gradle.kts
+          echo "Stamped version ${RELEASE_VERSION} into both extension manifests"
+
+      - name: Build LSP fat jar
+        run: |
+          mkdir -p extensions/intellij/src/main/resources/bin
+          sbt -DzioBdd.version="${ZIO_BDD_VERSION}" lsp/assembly
+
+      - name: Build VS Code extension
+        working-directory: extensions/vscode
+        run: |
+          npm ci
+          npm run compile
+          npx @vscode/vsce package --out "zio-bdd-${RELEASE_VERSION}.vsix"
+
+      - name: Build IntelliJ plugin
+        run: cd extensions/intellij && ./gradlew buildPlugin --no-daemon
+
+      - name: Upload LSP jar (shared with publish-intellij job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsp-jar
+          path: extensions/intellij/src/main/resources/bin/zio-bdd-lsp.jar
+          if-no-files-found: error
+
+      - name: Upload VS Code VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-vsix
+          path: extensions/vscode/zio-bdd-*.vsix
+          if-no-files-found: error
+
+      - name: Upload IntelliJ plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: intellij-plugin
+          path: extensions/intellij/build/distributions/*.zip
+          if-no-files-found: error
+
+  # ── Create GitHub release ────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name '*.vsix' -o -name '*.zip' \) \
+            -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  # ── Publish VS Code extension ────────────────────────────────────────────────
+  publish-vscode:
+    name: Publish VS Code extension
+    if: github.ref_type == 'tag'
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vscode-vsix
+          path: vsix
+
+      - name: Publish to VS Code Marketplace
+        run: |
+          npm install -g @vscode/vsce
+          vsce publish --pat "${{ secrets.VSCE_PAT }}" --packagePath vsix/zio-bdd-*.vsix
+
+      - name: Publish to Open VSX
+        if: ${{ secrets.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          npm install -g ovsx
+          ovsx publish vsix/zio-bdd-*.vsix --pat "${OVSX_PAT}"
+
+  # ── Sign and publish IntelliJ plugin ────────────────────────────────────────
+  publish-intellij:
+    name: Publish IntelliJ plugin
+    if: github.ref_type == 'tag'
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Gradle wrapper + caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/wrapper
+            ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('extensions/intellij/**/*.gradle.kts', 'extensions/intellij/**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Set release version from tag
+        run: |
+          RELEASE_VERSION="${GITHUB_REF_NAME#v}"
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          sed -i "s/^version = \"[^\"]*\"/version = \"${RELEASE_VERSION}\"/" extensions/intellij/build.gradle.kts
+
+      - name: Download LSP jar
+        uses: actions/download-artifact@v4
+        with:
+          name: lsp-jar
+          path: extensions/intellij/src/main/resources/bin
+
+      - name: Sign and publish plugin
+        working-directory: extensions/intellij
+        run: ./gradlew signPlugin publishPlugin --no-daemon
+        env:
+          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          CERTIFICATE_CHAIN:           ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY:                 ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD:        ${{ secrets.PRIVATE_KEY_PASSWORD }}

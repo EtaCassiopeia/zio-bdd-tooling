@@ -11,6 +11,9 @@
   "license": "Apache-2.0",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Testing", "Programming Languages"],
+  "keywords": ["scala", "zio", "bdd", "gherkin", "feature", "test"],
+  "galleryBanner": { "color": "#0f1923", "theme": "dark" },
+  "qna": "https://github.com/EtaCassiopeia/zio-bdd-tooling/discussions",
   "activationEvents": [
     "workspaceContains:**/*.feature",
     "onLanguage:gherkin"

@@ -91,3 +91,41 @@ all pass clean against the CDN defaults above.
 ```sh
 sbt lsp/test
 ```
+
+## Releasing
+
+Cutting a release is one command:
+
+```sh
+git tag v0.1.0
+git push --tags
+```
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which runs four jobs:
+
+| Job | What it does |
+|-----|-------------|
+| `build` | publishLocal zio-bdd → `sbt lsp/assembly` → VS Code `vsce package` → IntelliJ `buildPlugin`; uploads `.vsix` + `.zip` + `lsp.jar` as artifacts |
+| `release` | Creates a GitHub release with the `.vsix` and `.zip` attached and auto-generated release notes |
+| `publish-vscode` | Publishes the `.vsix` to the VS Code Marketplace (and optionally Open VSX) |
+| `publish-intellij` | Downloads the pre-built `lsp.jar`, runs `signPlugin publishPlugin` to sign and publish to JetBrains Marketplace |
+
+The version stamped into both `package.json` and `build.gradle.kts` is derived from the tag
+(e.g. `v0.1.0` → `0.1.0`) at release time.
+
+### Required GitHub secrets
+
+Configure these in the repository's **Settings → Secrets and variables → Actions**:
+
+| Secret | Used by | How to obtain |
+|--------|---------|---------------|
+| `VSCE_PAT` | VS Code Marketplace publish | marketplace.visualstudio.com → user settings → Personal Access Tokens |
+| `OVSX_PAT` | Open VSX (optional — job skips if absent) | open-vsx.org → user settings → Access Tokens |
+| `JETBRAINS_MARKETPLACE_TOKEN` | JetBrains Marketplace publish | plugins.jetbrains.com → developer account → Tokens |
+| `CERTIFICATE_CHAIN` | Plugin signing — PEM cert chain | JetBrains signing docs: [plugins.jetbrains.com/docs/intellij/plugin-signing.html](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html) |
+| `PRIVATE_KEY` | Plugin signing — PEM private key | (same doc; generated with `openssl`) |
+| `PRIVATE_KEY_PASSWORD` | Plugin signing — passphrase (may be empty string) | (same) |
+
+The `publish-vscode` job will fail cleanly if `VSCE_PAT` is not yet set. The `publish-intellij`
+job will fail if any of the four JetBrains secrets are missing. The `build` and `release` jobs
+require no secrets and always run on a tag push.

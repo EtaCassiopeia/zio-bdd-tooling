@@ -56,6 +56,16 @@ intellijPlatform {
             untilBuild = provider { null }
         }
     }
+
+    publishing {
+        token = providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN")
+    }
+
+    signing {
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey        = providers.environmentVariable("PRIVATE_KEY")
+        password          = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+    }
 }
 
 // ── Bundle the LSP fat jar ────────────────────────────────────────────────────

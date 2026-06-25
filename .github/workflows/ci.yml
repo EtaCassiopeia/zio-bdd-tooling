@@ -140,3 +140,36 @@ jobs:
           name: zio-bdd-intellij-plugin
           path: extensions/intellij/build/distributions/*.zip
           retention-days: 7
+
+  # ── VS Code extension: type-check + smoke package ───────────────────────────
+  vscode-extension:
+    name: VS Code extension (Node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/vscode
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and bundle
+        run: npm run compile
+
+      - name: Package extension (smoke test)
+        run: npx @vscode/vsce package --out zio-bdd-ci-smoke.vsix --skip-license
+
+      - name: Upload smoke VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: zio-bdd-vscode-ci-smoke
+          path: extensions/vscode/zio-bdd-ci-smoke.vsix
+          retention-days: 7
