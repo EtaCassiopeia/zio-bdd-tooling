@@ -24,6 +24,9 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Install sbt
+        uses: sbt/setup-sbt@v1
+
       - name: Cache sbt / Coursier
         uses: actions/cache@v4
         with:
@@ -52,6 +55,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+
+      - name: Install sbt
+        uses: sbt/setup-sbt@v1
 
       - name: Cache sbt / Coursier
         uses: actions/cache@v4
