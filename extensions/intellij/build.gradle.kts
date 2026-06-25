@@ -15,12 +15,9 @@ repositories {
 }
 
 // Defaults resolve from JetBrains' CDN / Marketplace — no local IDE install required.
-// Override for local-sandbox development (e.g. no CDN access, or testing against an
-// IDE/plugin version not yet published) via gradle.properties or `-P`:
+// Override for local-sandbox development via gradle.properties or `-P`:
 //   zioBdd.intellij.localPath=/Applications/IntelliJ IDEA.app
-//   zioBdd.intellij.localLsp4ijPath=/path/to/unpacked/lsp4ij
-val localIdePath    = providers.gradleProperty("zioBdd.intellij.localPath")
-val localLsp4ijPath = providers.gradleProperty("zioBdd.intellij.localLsp4ijPath")
+val localIdePath = providers.gradleProperty("zioBdd.intellij.localPath")
 
 dependencies {
     intellijPlatform {
@@ -28,12 +25,6 @@ dependencies {
             local(localIdePath.get())
         } else {
             intellijIdeaCommunity("2024.3")
-        }
-
-        if (localLsp4ijPath.isPresent) {
-            localPlugin(file(localLsp4ijPath.get()))
-        } else {
-            plugin("com.redhat.devtools.lsp4ij", "0.20.1")
         }
 
         testFramework(TestFrameworkType.Platform)
@@ -52,11 +43,11 @@ intellijPlatform {
                 <li>Customisable colour scheme — Settings → Editor → Color Scheme → zio-bdd Gherkin</li>
                 <li>Go-to-definition: Cmd+Click a step → jump to its Scala source</li>
                 <li>Diagnostics: missing step definitions highlighted with closest-match hints</li>
-                <li>Autocomplete: step suggestions (.feature) and unimplemented-step suggestions (.scala) with tab stops</li>
-                <li>Extractor autocomplete after `/` in step expressions</li>
-                <li>Hover: parameter types and descriptions for matched steps</li>
+                <li>Autocomplete: step suggestions in .feature files</li>
+                <li>Hover: parameter types and extractor names for matched steps</li>
+                <li>Run configurations: right-click a Scenario or click the gutter ▶ icon to run it</li>
             </ul>
-            Powered by a self-contained Scala LSP server — no compile step required.
+            Self-contained — no external plugins or compile step required.
         """.trimIndent()
 
         ideaVersion {

@@ -11,16 +11,14 @@
             <li>Customisable colour scheme — Settings → Editor → Color Scheme → zio-bdd Gherkin</li>
             <li>Go-to-definition: Cmd+Click a step → jump to its Scala source</li>
             <li>Diagnostics: missing step definitions highlighted with closest-match hints</li>
-            <li>Autocomplete: step suggestions with typed parameter tab stops</li>
-            <li>Hover: parameter types and descriptions for matched steps (via LSP)</li>
+            <li>Autocomplete: step suggestions in <code>.feature</code> files</li>
+            <li>Hover: parameter types and extractor names for matched steps</li>
             <li>Run configurations: right-click a Scenario or click the gutter ▶ icon to run it</li>
         </ul>
-        Powered by a self-contained Scala LSP server (hover/workspace diagnostics)
-        and a native PSI plugin (goto, annotator, completion, run configs).
+        Self-contained — no external plugins or compile step required.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
-    <depends>com.redhat.devtools.lsp4ij</depends>
 
     <extensions defaultExtensionNs="com.intellij">
 
@@ -79,21 +77,10 @@
         <projectActivity
                 implementation="zio.bdd.intellij.lang.ZioBddFileChangeListener"/>
 
-    </extensions>
-
-    <!--
-      LSP server registration — uses the lsp4ij namespace.
-      MUST NOT live inside defaultExtensionNs="com.intellij" or the IDE
-      will look for `com.intellij.com.redhat.devtools.lsp4ij.server` and silently fail.
-    -->
-    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
-
-        <server id="zio.bdd.lsp"
-                name="zio-bdd LSP"
-                factoryClass="zio.bdd.intellij.ZioBddLspServerDefinition"/>
-
-        <fileNamePatternMapping serverId="zio.bdd.lsp"
-                                patterns="*.feature"/>
+        <!-- ── Hover docs for matched steps ─────────────────────────────── -->
+        <lang.documentationProvider
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddDocumentationProvider"/>
 
     </extensions>
 
