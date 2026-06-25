@@ -11,13 +11,11 @@ import java.util.concurrent.TimeUnit
  * JVM test classpath, collects the JSON output, and returns runtime-accurate step
  * definitions.
  *
- * The LSP fat jar (`zio-bdd-lsp.jar`) is extracted to the system temp directory
- * by `ZioBddLspServerDefinition` when the plugin starts.  Once issue #2 is
- * merged, that jar contains `StepLoader`, so the same jar serves double duty as
- * the loader.
+ * The `zio-bdd-lsp.jar` ships inside the plugin as a resource at `/bin/zio-bdd-lsp.jar`.
+ * `findLoaderJar()` extracts it to the system temp directory on first use so that
+ * the subprocess can be launched via `java -cp`.
  *
- * Returns `null` if the loader jar is not yet available (LSP server hasn't
- * started) or if the subprocess fails for any reason; the caller falls back to
+ * Returns `null` if the subprocess fails for any reason; the caller falls back to
  * static source scanning.
  */
 object BspStepLoader {
@@ -34,7 +32,15 @@ object BspStepLoader {
 
     private fun findLoaderJar(): String? {
         val jar = File(System.getProperty("java.io.tmpdir"), "zio-bdd-lsp.jar")
-        return if (jar.exists()) jar.absolutePath else null
+        if (jar.exists()) return jar.absolutePath
+        // Extract from plugin resources on first use (no longer relies on
+        // ZioBddLspServerDefinition being present to pre-populate tmpdir).
+        val stream = BspStepLoader::class.java.getResourceAsStream("/bin/zio-bdd-lsp.jar")
+            ?: return null
+        return try {
+            stream.use { it.copyTo(jar.outputStream()) }
+            jar.absolutePath.takeIf { jar.exists() }
+        } catch (_: Exception) { null }
     }
 
     private fun getTestClasspath(project: Project): List<String> =
