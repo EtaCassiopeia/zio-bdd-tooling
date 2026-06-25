@@ -12,29 +12,68 @@
             <li>Go-to-definition: Cmd+Click a step → jump to its Scala source</li>
             <li>Diagnostics: missing step definitions highlighted with closest-match hints</li>
             <li>Autocomplete: step suggestions with typed parameter tab stops</li>
-            <li>Hover: parameter types and descriptions for matched steps</li>
+            <li>Hover: parameter types and descriptions for matched steps (via LSP)</li>
+            <li>Run configurations: right-click a Scenario or click the gutter ▶ icon to run it</li>
         </ul>
-        Powered by a self-contained Scala LSP server — no compile step required.
+        Powered by a self-contained Scala LSP server (hover/workspace diagnostics)
+        and a native PSI plugin (goto, annotator, completion, run configs).
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.redhat.devtools.lsp4ij</depends>
 
-    <!-- Platform extensions -->
     <extensions defaultExtensionNs="com.intellij">
 
+        <!-- ── File type & language ───────────────────────────────────────── -->
         <fileType name="Gherkin Feature"
                   implementationClass="zio.bdd.intellij.lang.ZioBddFileType"
                   fieldName="INSTANCE"
                   language="ZioBddGherkin"
                   extensions="feature"/>
 
+        <!-- ── Syntax highlighting ────────────────────────────────────────── -->
         <lang.syntaxHighlighterFactory
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddSyntaxHighlighterFactory"/>
 
         <colorSettingsPage
                 implementation="zio.bdd.intellij.lang.ZioBddColorSettingsPage"/>
+
+        <!-- ── Native PSI parser ──────────────────────────────────────────── -->
+        <lang.parserDefinition
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddParserDefinition"/>
+
+        <!-- ── Step validation ────────────────────────────────────────────── -->
+        <annotator
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddAnnotator"/>
+
+        <!-- ── Go-to-definition ───────────────────────────────────────────── -->
+        <gotoDeclarationHandler
+                implementation="zio.bdd.intellij.lang.ZioBddGotoStepHandler"/>
+
+        <!-- ── Code completion ────────────────────────────────────────────── -->
+        <completion.contributor
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddCompletionContributor"
+                order="first"/>
+
+        <!-- ── Run gutter icons ───────────────────────────────────────────── -->
+        <codeInsight.lineMarkerProvider
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddLineMarkerProvider"/>
+
+        <!-- ── Run configurations ─────────────────────────────────────────── -->
+        <configurationType
+                implementation="zio.bdd.intellij.execution.ZioBddRunConfigurationType"/>
+
+        <runConfigurationProducer
+                implementation="zio.bdd.intellij.execution.ZioBddRunConfigurationProducer"/>
+
+        <!-- ── Per-project step-definition cache ─────────────────────────── -->
+        <projectService
+                serviceImplementation="zio.bdd.intellij.lang.ZioBddStepCache"/>
 
     </extensions>
 
