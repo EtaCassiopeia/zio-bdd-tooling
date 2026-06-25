@@ -33,6 +33,7 @@ class ZioBddAnnotator : Annotator {
 
         holder.newAnnotation(HighlightSeverity.WARNING, message)
             .range(element)
+            .withFix(ZioBddGenerateStepFix(keyword, stepText))
             .create()
     }
 
