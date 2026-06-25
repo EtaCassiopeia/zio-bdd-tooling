@@ -48,16 +48,22 @@ object DiagnosticsHandler:
         val startCol = lineText.indexWhere(!_.isWhitespace).max(0)
         val endCol   = lineText.length
         val range    = new Range(new Position(line, startCol), new Position(line, endCol))
+        // Not "run `sbt zioBddSnippets`" — that sbt task is defined in zio-bdd's own build
+        // (project/*.scala auto-plugins) and isn't available to a project that just depends on
+        // the published zio-bdd library (see EtaCassiopeia/zio-bdd#104). Point at this LSP's own
+        // completion instead: opening the step-definition .scala file and typing inside a
+        // Given/When/Then(...) call surfaces this exact unmatched step text as a completion item
+        // (CompletionHandler.unimplementedStepCompletion) — a skeleton with no extra command.
         val msg = hint match
           case Some((closest, dist)) if dist <= MaxLevenshteinForHint =>
             val fileName = closest.file.split("[/\\\\]").last
             s"""No step definition found.
                |Closest match: "${closest.displayText}"
                |  ($fileName:${closest.line + 1})
-               |Run `sbt zioBddSnippets` to generate a skeleton.""".stripMargin
+               |Open a step-definition file and start typing inside Given/When/Then(...) for a completion skeleton.""".stripMargin
           case _ =>
             s"""No step definition found for: "${step.pattern}"
-               |Run `sbt zioBddSnippets` to generate a skeleton.""".stripMargin
+               |Open a step-definition file and start typing inside Given/When/Then(...) for a completion skeleton.""".stripMargin
         Some(new Diagnostic(range, msg, DiagnosticSeverity.Warning, "zio-bdd"))
 
   private def stepTypeToKeyword(st: StepType): String = st match

@@ -29,11 +29,6 @@
     ],
     "commands": [
       {
-        "command": "zio-bdd.generateRegistry",
-        "title": "zio-bdd: Generate Step Registry",
-        "icon": "$(refresh)"
-      },
-      {
         "command": "zio-bdd.runCommand",
         "title": "zio-bdd: Run sbt Command"
       },

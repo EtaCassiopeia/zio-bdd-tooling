@@ -7,19 +7,11 @@ export function registerCommands(
   output: vscode.OutputChannel,
   statusBar: vscode.StatusBarItem,
 ): void {
-
-  // Generate step registry
-  context.subscriptions.push(
-    vscode.commands.registerCommand('zio-bdd.generateRegistry', async () => {
-      const sbt = vscode.workspace.getConfiguration('zio-bdd').get<string>('sbtCommand') ?? 'sbt';
-      const terminal = vscode.window.createTerminal('zio-bdd: generate registry');
-      terminal.show();
-      terminal.sendText(`${sbt} generateStepRegistry`);
-      statusBar.text = '$(sync~spin) zio-bdd: regenerating…';
-      // Reset status bar after a short delay
-      setTimeout(() => { statusBar.text = '$(check) zio-bdd: ready'; }, 10_000);
-    })
-  );
+  // No "generate step registry" command here: `sbt generateStepRegistry` is defined in
+  // zio-bdd's own build (project/*.scala auto-plugins), not available to a project that just
+  // depends on the published zio-bdd library — see EtaCassiopeia/zio-bdd#104. This extension's
+  // own go-to-definition/hover/completion/diagnostics don't need that intermediate JSON anyway;
+  // they come straight from the LSP's live source scan.
 
   // Restart LSP server
   context.subscriptions.push(

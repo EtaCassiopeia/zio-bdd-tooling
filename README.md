@@ -31,9 +31,9 @@ issue's M2/M3 phasing):
 - Native IntelliJ PSI plugin (own lexer/parser/index walking Scala PSI directly, per #93's
   original architecture decision) — using the generic LSP4IJ client instead is far less work
   and was judged good enough for now; revisit if its run/debug/refactor support proves limiting.
-- Run configurations / gutter run icons / "generate step registry" action for IntelliJ —
-  the LSP4IJ-based plugin currently only does syntax highlighting + the LSP-provided features
-  (diagnostics, completion, hover, definition, code lens via the generic LSP4IJ UI).
+- Run configurations / gutter run icons for IntelliJ — the LSP4IJ-based plugin currently only
+  does syntax highlighting + the LSP-provided features (diagnostics, completion, hover,
+  definition, code lens via the generic LSP4IJ UI).
 
 ## Design note: no hand-copied extractor patterns
 
@@ -44,6 +44,18 @@ extractor patterns from `zio.bdd.core.step.DefaultTypedExtractor.byName` — add
 specifically so tooling has one source of truth (see
 [zio-bdd#103](https://github.com/EtaCassiopeia/zio-bdd/pull/103)). `StepExtractorSpec` has a
 regression test pinning this.
+
+## Design note: no `generate step registry` command, no `sbt zioBddSnippets` advice
+
+An earlier draft had a VSCode command and a diagnostic hint pointing users at `sbt
+generateStepRegistry` / `sbt zioBddSnippets`. Both are sbt tasks defined in zio-bdd's own
+build (`project/*.scala` auto-plugins) — they're not part of the published `zio-bdd` library,
+so a project that just depends on it doesn't have them (see
+[zio-bdd#104](https://github.com/EtaCassiopeia/zio-bdd/issues/104)). Neither is needed here
+anyway: this LSP does its own live source scan for go-to-definition/hover/completion/diagnostics
+(no `step-registry.json` intermediate), and `CompletionHandler.unimplementedStepCompletion`
+already surfaces a skeleton for an unmatched step as a completion item the moment you start
+typing inside a `Given`/`When`/`Then(...)` call in a step-definition file.
 
 ## Project structure
 
@@ -76,7 +88,7 @@ zio-bdd-tooling/
     ├── vscode/                        # TypeScript VSCode extension
     │   ├── src/
     │   │   ├── extension.ts           # LSP client + activation
-    │   │   ├── commands.ts            # generateRegistry, restart, showOutput
+    │   │   ├── commands.ts            # restart, showOutput
     │   │   └── testController.ts      # VSCode Test Explorer
     │   ├── syntaxes/gherkin.tmLanguage.json
     │   ├── package.json
