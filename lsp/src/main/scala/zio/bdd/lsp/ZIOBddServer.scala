@@ -87,6 +87,14 @@ final class ZIOBddServer(
 
   def setClient(c: LanguageClient): Unit = fireAndForget(client.set(Some(c)))
 
+  // Complete the ready gate immediately — for use in unit/integration tests only.
+  private[lsp] def forceReady: UIO[Unit] = ready.succeed(()).unit
+
+  // Pre-populate the content cache without a filesystem round-trip or async
+  // reindex — for use in integration tests only.
+  private[lsp] def putContent(uri: String, content: String): UIO[Unit] =
+    ZIO.succeed(contentCache.put(uri, content)).unit
+
   // ── TextDocumentService ───────────────────────────────────────────────────
 
   override def didOpen(params: DidOpenTextDocumentParams): Unit =
@@ -298,3 +306,7 @@ object ZIOBddServer:
         bspRef <- Ref.make(Option.empty[BspClient])
       yield ZIOBddServer(index, rt, client, ready, bspRef)
     }
+
+  // Like `layer` but also provides ZIOBddServer as a typed service — for
+  // integration tests that need to call handler methods directly.
+  val testLayer: ZLayer[WorkspaceIndex, Nothing, ZIOBddServer] = layer

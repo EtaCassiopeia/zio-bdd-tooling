@@ -55,18 +55,16 @@ jobs:
       - name: Publish zio-bdd locally and capture version
         run: |
           cd .zio-bdd-src
-          RAW=$(git describe --tags --long --match 'v*')
-          WITHOUT_V="${RAW#v}"
-          COUNT=$(echo "$WITHOUT_V" | cut -d'-' -f2)
-          HASH=$(echo "$WITHOUT_V"  | cut -d'-' -f3 | sed 's/^g//')
-          BASE=$(echo "$WITHOUT_V"  | cut -d'-' -f1)
-          if [ "$COUNT" = "0" ]; then
-            VERSION="$BASE"
-          else
-            VERSION="${BASE}+${COUNT}-${HASH}-SNAPSHOT"
+          sbt publishLocal 2>&1 | tee /tmp/zio-bdd-publish.log
+          # Extract the exact version from the ivy path sbt wrote to ~/.ivy2/local.
+          # Example line: "published ivy to /home/runner/.ivy2/local/io.github.etacassiopeia/zio-bdd_3/1.0.0+12-92bdc67c-SNAPSHOT/ivys/ivy.xml"
+          VERSION=$(grep -oP '(?<=io\.github\.etacassiopeia/zio-bdd_3/)[^/]+(?=/ivys)' /tmp/zio-bdd-publish.log | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: could not extract zio-bdd version from publishLocal output"
+            exit 1
           fi
           echo "ZIO_BDD_VERSION=$VERSION" >> "$GITHUB_ENV"
-          sbt publishLocal
+          echo "Resolved zio-bdd version: $VERSION"
 
       - name: Check formatting
         run: sbt -DzioBdd.version="${ZIO_BDD_VERSION}" scalafmtCheckAll
@@ -119,18 +117,14 @@ jobs:
       - name: Publish zio-bdd locally and capture version
         run: |
           cd .zio-bdd-src
-          RAW=$(git describe --tags --long --match 'v*')
-          WITHOUT_V="${RAW#v}"
-          COUNT=$(echo "$WITHOUT_V" | cut -d'-' -f2)
-          HASH=$(echo "$WITHOUT_V"  | cut -d'-' -f3 | sed 's/^g//')
-          BASE=$(echo "$WITHOUT_V"  | cut -d'-' -f1)
-          if [ "$COUNT" = "0" ]; then
-            VERSION="$BASE"
-          else
-            VERSION="${BASE}+${COUNT}-${HASH}-SNAPSHOT"
+          sbt publishLocal 2>&1 | tee /tmp/zio-bdd-publish.log
+          VERSION=$(grep -oP '(?<=io\.github\.etacassiopeia/zio-bdd_3/)[^/]+(?=/ivys)' /tmp/zio-bdd-publish.log | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: could not extract zio-bdd version from publishLocal output"
+            exit 1
           fi
           echo "ZIO_BDD_VERSION=$VERSION" >> "$GITHUB_ENV"
-          sbt publishLocal
+          echo "Resolved zio-bdd version: $VERSION"
 
       - name: Build LSP fat jar
         run: sbt -DzioBdd.version="${ZIO_BDD_VERSION}" lsp/assembly
