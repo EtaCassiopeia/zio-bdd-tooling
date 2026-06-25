@@ -86,6 +86,21 @@ testing against an unreleased IDE version), pass:
 Verified end-to-end: `./gradlew buildPlugin verifyPluginStructure verifyPluginProjectConfiguration`
 all pass clean against the CDN defaults above.
 
+## Build a GraalVM native binary (optional)
+
+`sbt-native-image` is already configured for both `lsp` and `cli`. To produce a standalone
+binary instead of a fat jar, install GraalVM JDK 21, then:
+
+```sh
+sbt lsp/nativeImage   # → bin/zio-bdd-lsp
+sbt cli/nativeImage   # → bin/zio-bdd
+```
+
+The native binary starts in ~50 ms vs ~1–2 s for the jar. The VS Code extension's
+`resolveLspLaunch` already prefers `bin/zio-bdd-lsp` over the jar if it exists at the
+expected path. Native builds are not part of the standard release pipeline (which uses the
+jar for platform-agnostic distribution).
+
 ## Tests
 
 ```sh
