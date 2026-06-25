@@ -48,13 +48,13 @@ object StepMatcherSpec extends ZIOSpecDefault:
     },
     test("Scenario Outline <col> placeholder matches structurally against extractor step def") {
       val defn = StepDefinition(
-        keyword          = "And",
-        literals         = List("the user's age is "),
-        extractors       = List(ExtractorInfo("int", "Int", """(-?\d+)""", "signed integer")),
-        displayText      = "the user's age is {int}",
-        pattern          = """^the user's age is (-?\d+)$""",
-        file             = "Steps.scala",
-        line             = 10,
+        keyword = "And",
+        literals = List("the user's age is "),
+        extractors = List(ExtractorInfo("int", "Int", """(-?\d+)""", "signed integer")),
+        displayText = "the user's age is {int}",
+        pattern = """^the user's age is (-?\d+)$""",
+        file = "Steps.scala",
+        line = 10,
         isStateInjecting = false
       )
       val result = StepMatcher.find("And", "the user's age is <age>", List(defn))
@@ -62,13 +62,13 @@ object StepMatcherSpec extends ZIOSpecDefault:
     },
     test("mismatched placeholder count does not structurally match") {
       val defn = StepDefinition(
-        keyword          = "Given",
-        literals         = List("a user named "),
-        extractors       = List(ExtractorInfo("string", "String", """(".*"|.*)""", "text")),
-        displayText      = "a user named {string}",
-        pattern          = """^a user named (".*"|.*)$""",
-        file             = "Steps.scala",
-        line             = 5,
+        keyword = "Given",
+        literals = List("a user named "),
+        extractors = List(ExtractorInfo("string", "String", """(".*"|.*)""", "text")),
+        displayText = "a user named {string}",
+        pattern = """^a user named (".*"|.*)$""",
+        file = "Steps.scala",
+        line = 5,
         isStateInjecting = false
       )
       val result = StepMatcher.find("Given", "a user named <first> <last>", List(defn))

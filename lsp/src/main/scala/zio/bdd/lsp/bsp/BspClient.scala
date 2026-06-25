@@ -28,14 +28,14 @@ import scala.jdk.CollectionConverters.*
 // Threading: all BSP I/O runs on ZIO's blocking thread pool. Responses to
 // in-flight requests are routed via a Ref[Map[Int, Promise[...]]].
 final class BspClient private (
-  private val process:       Process,
-  private val in:            InputStream,
-  private val out:           OutputStream,
-  private val nextId:        Ref[Int],
-  private val pending:       Ref[Map[Int, Promise[String, String]]],
+  private val process: Process,
+  private val in: InputStream,
+  private val out: OutputStream,
+  private val nextId: Ref[Int],
+  private val pending: Ref[Map[Int, Promise[String, String]]],
   private val sourceDirsRef: Ref[List[String]],
-  private val classpathRef:  Ref[List[String]],
-  private val onCompile:     UIO[Unit]
+  private val classpathRef: Ref[List[String]],
+  private val onCompile: UIO[Unit]
 ):
 
   def sourceDirs: UIO[List[String]] = sourceDirsRef.get
@@ -53,9 +53,9 @@ final class BspClient private (
       id      <- nextRequestId
       promise <- Promise.make[String, String]
       _       <- pending.update(_ + (id -> promise))
-      body = s"""{"jsonrpc":"2.0","id":$id,"method":"$method","params":$params}"""
-      _      <- BspJsonRpc.send(out, body)
-      result <- promise.await
+      body     = s"""{"jsonrpc":"2.0","id":$id,"method":"$method","params":$params}"""
+      _       <- BspJsonRpc.send(out, body)
+      result  <- promise.await
     yield result
 
   private def notify(method: String, params: String): UIO[Unit] =
@@ -75,7 +75,7 @@ final class BspClient private (
 
   private def dispatch(msg: String): UIO[Unit] =
     ZIO.succeedBlocking(tryParseJson(msg)).flatMap {
-      case None      => ZIO.unit
+      case None => ZIO.unit
       case Some(obj) =>
         val hasId     = obj.has("id") && !obj.get("id").isJsonNull
         val hasMethod = obj.has("method")
@@ -86,7 +86,7 @@ final class BspClient private (
           pending
             .modify(m => (m.get(id), m - id))
             .flatMap {
-              case None          => ZIO.unit
+              case None => ZIO.unit
               case Some(promise) =>
                 if obj.has("error") then promise.fail(obj.get("error").toString).unit
                 else promise.succeed(if obj.has("result") then obj.get("result").toString else "{}").unit
@@ -137,42 +137,43 @@ final class BspClient private (
       .orElseSucceed(())
 
   private[bsp] def loadBuildTargets: UIO[Unit] =
-    request("workspace/buildTargets", "{}")
-      .flatMap { result =>
-        ZIO.succeedBlocking(extractTestTargetIds(result)).flatMap { ids =>
-          ZIO.logInfo(s"BSP: ${ids.size} build target(s) — fetching source roots") *>
-            ZIO.foreachDiscard(ids)(loadSourcesForTarget) *>
-            ZIO.foreachDiscard(ids)(loadJvmEnvForTarget)
-        }
+    request("workspace/buildTargets", "{}").flatMap { result =>
+      ZIO.succeedBlocking(extractTestTargetIds(result)).flatMap { ids =>
+        ZIO.logInfo(s"BSP: ${ids.size} build target(s) — fetching source roots") *>
+          ZIO.foreachDiscard(ids)(loadSourcesForTarget) *>
+          ZIO.foreachDiscard(ids)(loadJvmEnvForTarget)
       }
+    }
       .tapError(err => ZIO.logWarning(s"BSP workspace/buildTargets failed: $err"))
       .orElseSucceed(())
 
   private def loadSourcesForTarget(targetUri: String): UIO[Unit] =
     val params = s"""{"targets":[{"uri":"$targetUri"}]}"""
-    request("buildTarget/sources", params)
-      .flatMap { result =>
-        ZIO.succeedBlocking(extractSourceDirs(result)).flatMap { dirs =>
-          ZIO.when(dirs.nonEmpty)(
+    request("buildTarget/sources", params).flatMap { result =>
+      ZIO.succeedBlocking(extractSourceDirs(result)).flatMap { dirs =>
+        ZIO
+          .when(dirs.nonEmpty)(
             sourceDirsRef.update(existing => (existing ++ dirs).distinct) *>
               ZIO.logInfo(s"BSP: added ${dirs.size} source dir(s) from $targetUri")
-          ).unit
-        }
+          )
+          .unit
       }
+    }
       .tapError(e => ZIO.logDebug(s"BSP buildTarget/sources failed for $targetUri: $e"))
       .orElseSucceed(())
 
   private def loadJvmEnvForTarget(targetUri: String): UIO[Unit] =
     val params = s"""{"targets":[{"uri":"$targetUri"}]}"""
-    request("buildTarget/jvmTestEnvironment", params)
-      .flatMap { result =>
-        ZIO.succeedBlocking(extractClasspath(result)).flatMap { cp =>
-          ZIO.when(cp.nonEmpty)(
+    request("buildTarget/jvmTestEnvironment", params).flatMap { result =>
+      ZIO.succeedBlocking(extractClasspath(result)).flatMap { cp =>
+        ZIO
+          .when(cp.nonEmpty)(
             classpathRef.update(existing => (existing ++ cp).distinct) *>
               ZIO.logInfo(s"BSP: classpath has ${cp.size} entries for $targetUri")
-          ).unit
-        }
+          )
+          .unit
       }
+    }
       .tapError(e => ZIO.logDebug(s"BSP buildTarget/jvmTestEnvironment failed for $targetUri: $e"))
       .orElseSucceed(())
 
@@ -181,31 +182,28 @@ final class BspClient private (
   private def extractTestTargetIds(result: String): List[String] =
     try
       val targets = JsonParser.parseString(result).getAsJsonObject.getAsJsonArray("targets")
-      targets.asScala
-        .flatMap { t =>
-          val obj    = t.getAsJsonObject
-          val uri    = obj.getAsJsonObject("id").get("uri").getAsString
-          val isTest =
-            if obj.has("tags") then obj.getAsJsonArray("tags").asScala.exists(_.getAsString.contains("test"))
-            else false
-          if isTest || uri.contains("test") then Some(uri) else None
-        }
-        .toList
+      targets.asScala.flatMap { t =>
+        val obj = t.getAsJsonObject
+        val uri = obj.getAsJsonObject("id").get("uri").getAsString
+        val isTest =
+          if obj.has("tags") then obj.getAsJsonArray("tags").asScala.exists(_.getAsString.contains("test"))
+          else false
+        if isTest || uri.contains("test") then Some(uri) else None
+      }.toList
     catch case _: Throwable => Nil
 
   private def extractSourceDirs(result: String): List[String] =
     try
       val items = JsonParser.parseString(result).getAsJsonObject.getAsJsonArray("items")
-      items.asScala
-        .flatMap { item =>
-          item.getAsJsonObject.getAsJsonArray("sources").asScala.flatMap { src =>
-            val obj  = src.getAsJsonObject
-            val kind = if obj.has("kind") then obj.get("kind").getAsInt else 0
-            // kind=2 means GENERATED — skip to avoid indexing target/ output
-            if kind != 2 then Some(obj.get("uri").getAsString.stripPrefix("file://"))
-            else None
-          }
+      items.asScala.flatMap { item =>
+        item.getAsJsonObject.getAsJsonArray("sources").asScala.flatMap { src =>
+          val obj  = src.getAsJsonObject
+          val kind = if obj.has("kind") then obj.get("kind").getAsInt else 0
+          // kind=2 means GENERATED — skip to avoid indexing target/ output
+          if kind != 2 then Some(obj.get("uri").getAsString.stripPrefix("file://"))
+          else None
         }
+      }
         .filter(_.nonEmpty)
         .toList
     catch case _: Throwable => Nil
@@ -213,12 +211,12 @@ final class BspClient private (
   private def extractClasspath(result: String): List[String] =
     try
       val items = JsonParser.parseString(result).getAsJsonObject.getAsJsonArray("items")
-      items.asScala
-        .flatMap { item =>
-          item.getAsJsonObject.getAsJsonArray("classpath").asScala
-            .map(_.getAsString.stripPrefix("file://"))
-        }
-        .toList
+      items.asScala.flatMap { item =>
+        item.getAsJsonObject
+          .getAsJsonArray("classpath")
+          .asScala
+          .map(_.getAsString.stripPrefix("file://"))
+      }.toList
     catch case _: Throwable => Nil
 
 object BspClient:
@@ -227,10 +225,10 @@ object BspClient:
   // Source dirs and classpath populate asynchronously as BSP responses arrive.
   def connect(
     workspaceRoot: String,
-    onCompile:     UIO[Unit]
+    onCompile: UIO[Unit]
   ): UIO[Option[BspClient]] =
     BspConnectionFile.find(workspaceRoot).flatMap {
-      case None       => ZIO.none
+      case None => ZIO.none
       case Some(conn) =>
         startClient(conn, onCompile)
           .tapError(e => ZIO.logWarning(s"BSP connection failed (${conn.name}): $e"))
@@ -249,7 +247,7 @@ object BspClient:
         pending       <- Ref.make(Map.empty[Int, Promise[String, String]])
         sourceDirsRef <- Ref.make(List.empty[String])
         classpathRef  <- Ref.make(List.empty[String])
-        bsp = BspClient(process, in, out, nextId, pending, sourceDirsRef, classpathRef, onCompile)
+        bsp            = BspClient(process, in, out, nextId, pending, sourceDirsRef, classpathRef, onCompile)
         // Drain stderr so the BSP server doesn't block on a full pipe
         _ <- ZIO
                .attemptBlocking(process.getErrorStream.transferTo(java.io.OutputStream.nullOutputStream()))

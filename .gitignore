@@ -31,3 +31,4 @@ extensions/intellij/src/main/resources/bin/
 !extensions/intellij/gradle/wrapper/gradle-wrapper.jar
 # bundled LSP jar — produced by `make vscode`, not tracked in git
 extensions/vscode/bin/
+extensions/intellij/.intellijPlatform/

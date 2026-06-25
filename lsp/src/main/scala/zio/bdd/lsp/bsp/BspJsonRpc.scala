@@ -50,8 +50,8 @@ private[bsp] object BspJsonRpc:
   private def readHeader(in: InputStream): Option[String] =
     // Sliding 4-byte window to detect \r\n\r\n (13,10,13,10)
     var b0, b1, b2, b3 = 0
-    val buf             = new java.io.ByteArrayOutputStream(256)
-    var b               = in.read()
+    val buf            = new java.io.ByteArrayOutputStream(256)
+    var b              = in.read()
     if b == -1 then return None
     var found = false
     while !found && b != -1 do

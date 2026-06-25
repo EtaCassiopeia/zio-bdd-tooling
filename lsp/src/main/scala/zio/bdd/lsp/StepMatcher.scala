@@ -34,11 +34,11 @@ object StepMatcher:
    * True if the step text matches the definition.
    *
    * Two strategies:
-   *  1. Regex match — the normal case for concrete step text.
-   *  2. Structural match — for Scenario Outline steps that still contain
-   *     `<col>` placeholders (not yet substituted from the Examples table).
-   *     Mirrors `StepExpression.structuralMatch`: literal segments must align
-   *     and the placeholder count must equal the extractor count.
+   *   1. Regex match — the normal case for concrete step text. 2. Structural
+   *      match — for Scenario Outline steps that still contain `<col>`
+   *      placeholders (not yet substituted from the Examples table). Mirrors
+   *      `StepExpression.structuralMatch`: literal segments must align and the
+   *      placeholder count must equal the extractor count.
    */
   def matches(text: String, defn: StepDefinition): Boolean =
     if colPlaceholder.findFirstIn(text).isDefined then structuralMatch(text, defn)
@@ -47,10 +47,10 @@ object StepMatcher:
       catch case _: Exception => false
 
   private def structuralMatch(template: String, defn: StepDefinition): Boolean =
-    val tTokens = tokenizeTemplate(template)
-    val pLiterals = defn.literals
-    val pExtractors = defn.extractors
-    val tLiterals = tTokens.collect { case Left(s) => s }
+    val tTokens       = tokenizeTemplate(template)
+    val pLiterals     = defn.literals
+    val pExtractors   = defn.extractors
+    val tLiterals     = tTokens.collect { case Left(s) => s }
     val tPlaceholders = tTokens.collect { case Right(s) => s }
     tLiterals == pLiterals && tPlaceholders.length == pExtractors.length
 
