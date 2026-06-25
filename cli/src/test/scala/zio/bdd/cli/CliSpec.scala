@@ -8,9 +8,10 @@ import scala.jdk.CollectionConverters.*
 object CliSpec extends ZIOSpecDefault:
   def spec = suite("CLI Scanner")(
     test("collectStepDefs finds Given/When/Then in Scala source") {
-      val tmp = Files.createTempDirectory("cli-test")
+      val tmp   = Files.createTempDirectory("cli-test")
       val scala = tmp.resolve("Steps.scala")
-      Files.writeString(scala,
+      Files.writeString(
+        scala,
         """
           |object Steps:
           |  Given("a user exists") { ZIO.unit }
@@ -25,11 +26,11 @@ object CliSpec extends ZIOSpecDefault:
         defs.exists(_.displayText == "a user exists")
       )
     },
-
     test("unmatchedSteps returns steps that have no matching definition") {
-      val tmp = Files.createTempDirectory("cli-unmatched")
+      val tmp     = Files.createTempDirectory("cli-unmatched")
       val feature = tmp.resolve("test.feature")
-      Files.writeString(feature,
+      Files.writeString(
+        feature,
         """
           |Feature: Login
           |  Scenario: Happy path
@@ -39,7 +40,8 @@ object CliSpec extends ZIOSpecDefault:
           |""".stripMargin
       )
       val scala = tmp.resolve("Steps.scala")
-      Files.writeString(scala,
+      Files.writeString(
+        scala,
         """
           |object Steps:
           |  Given("a user exists") { ZIO.unit }
@@ -52,17 +54,18 @@ object CliSpec extends ZIOSpecDefault:
         unmatched.exists(_.text == "they see the dashboard")
       )
     },
-
     test("unmatchedSteps returns empty when all steps are matched") {
       val tmp = Files.createTempDirectory("cli-matched")
-      Files.writeString(tmp.resolve("test.feature"),
+      Files.writeString(
+        tmp.resolve("test.feature"),
         """
           |Feature: Login
           |  Scenario: Happy path
           |    Given a user exists
           |""".stripMargin
       )
-      Files.writeString(tmp.resolve("Steps.scala"),
+      Files.writeString(
+        tmp.resolve("Steps.scala"),
         """
           |object Steps:
           |  Given("a user exists") { ZIO.unit }
@@ -71,7 +74,6 @@ object CliSpec extends ZIOSpecDefault:
       val unmatched = Scanner.unmatchedSteps(tmp)
       assertTrue(unmatched.isEmpty)
     },
-
     test("toSkeleton produces a valid step skeleton for an unmatched step") {
       val tmp  = Path.of("/tmp")
       val u    = Scanner.UnmatchedStep("Given", "a user named \"Alice\" exists", tmp.resolve("f.feature"), 5)
@@ -81,5 +83,5 @@ object CliSpec extends ZIOSpecDefault:
         skel.contains("ZIO.unit"),
         skel.contains("\\\"Alice\\\"")
       )
-    },
+    }
   )

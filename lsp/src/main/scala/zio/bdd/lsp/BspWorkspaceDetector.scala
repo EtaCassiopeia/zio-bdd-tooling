@@ -45,7 +45,10 @@ object BspWorkspaceDetector:
         standardSourceDirs(root).foreach(d => candidates += d)
 
         // Top-level module directories (one level deep)
-        Files.list(root).iterator().asScala
+        Files
+          .list(root)
+          .iterator()
+          .asScala
           .filter(p => Files.isDirectory(p) && !isHiddenOrBuild(p))
           .foreach { moduleDir =>
             standardSourceDirs(moduleDir).foreach(d => candidates += d)
@@ -59,7 +62,7 @@ object BspWorkspaceDetector:
     base.resolve("src/main/scala"),
     base.resolve("src/test/scala"),
     base.resolve("src/main/java"),
-    base.resolve("src"),
+    base.resolve("src")
   )
 
   private def isHiddenOrBuild(p: Path): Boolean =

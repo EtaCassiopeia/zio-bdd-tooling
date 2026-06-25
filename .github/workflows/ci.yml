@@ -10,6 +10,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# zio-bdd-tooling uses APIs added after zio-bdd v1.0.0 (DefaultTypedExtractor,
+# Tag[A] on TypedExtractor, structural matcher). Until a new tagged release is
+# published to Maven Central, CI checks out zio-bdd main, publishLocal, and
+# passes the computed SNAPSHOT version to all sbt invocations.
+# Once EtaCassiopeia/zio-bdd tags v1.0.1+, replace the "Setup zio-bdd" steps
+# with updating `zioBddVersion` in build.sbt and removing `ZIO_BDD_VERSION`.
+
 jobs:
   # ── Scala: format check + unit tests ────────────────────────────────────────
   test:
@@ -19,6 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Check out the zio-bdd core so we can publishLocal the SNAPSHOT version
+      - name: Checkout zio-bdd
+        uses: actions/checkout@v4
+        with:
+          repository: EtaCassiopeia/zio-bdd
+          fetch-depth: 0        # sbt-dynver needs full git history for version
+          path: .zio-bdd-src
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -34,14 +49,30 @@ jobs:
             ~/.sbt
             ~/.ivy2/cache
             ~/.cache/coursier
-          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/build.properties', 'project/*.sbt', 'project/*.scala') }}
+          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/build.properties', 'project/*.sbt', '.zio-bdd-src/build.sbt') }}
           restore-keys: ${{ runner.os }}-sbt-
 
+      - name: Publish zio-bdd locally and capture version
+        run: |
+          cd .zio-bdd-src
+          RAW=$(git describe --tags --long --match 'v*')
+          WITHOUT_V="${RAW#v}"
+          COUNT=$(echo "$WITHOUT_V" | cut -d'-' -f2)
+          HASH=$(echo "$WITHOUT_V"  | cut -d'-' -f3 | sed 's/^g//')
+          BASE=$(echo "$WITHOUT_V"  | cut -d'-' -f1)
+          if [ "$COUNT" = "0" ]; then
+            VERSION="$BASE"
+          else
+            VERSION="${BASE}+${COUNT}-${HASH}-SNAPSHOT"
+          fi
+          echo "ZIO_BDD_VERSION=$VERSION" >> "$GITHUB_ENV"
+          sbt publishLocal
+
       - name: Check formatting
-        run: sbt scalafmtCheckAll
+        run: sbt -DzioBdd.version="${ZIO_BDD_VERSION}" scalafmtCheckAll
 
       - name: Run tests
-        run: sbt test
+        run: sbt -DzioBdd.version="${ZIO_BDD_VERSION}" test
 
   # ── IntelliJ plugin: LSP jar + Gradle buildPlugin ───────────────────────────
   intellij-plugin:
@@ -51,6 +82,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout zio-bdd
+        uses: actions/checkout@v4
+        with:
+          repository: EtaCassiopeia/zio-bdd
+          fetch-depth: 0
+          path: .zio-bdd-src
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -66,7 +104,7 @@ jobs:
             ~/.sbt
             ~/.ivy2/cache
             ~/.cache/coursier
-          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/build.properties', 'project/*.sbt', 'project/*.scala') }}
+          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/build.properties', 'project/*.sbt', '.zio-bdd-src/build.sbt') }}
           restore-keys: ${{ runner.os }}-sbt-
 
       - name: Cache Gradle wrapper + caches
@@ -78,8 +116,24 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('extensions/intellij/**/*.gradle.kts', 'extensions/intellij/**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
 
+      - name: Publish zio-bdd locally and capture version
+        run: |
+          cd .zio-bdd-src
+          RAW=$(git describe --tags --long --match 'v*')
+          WITHOUT_V="${RAW#v}"
+          COUNT=$(echo "$WITHOUT_V" | cut -d'-' -f2)
+          HASH=$(echo "$WITHOUT_V"  | cut -d'-' -f3 | sed 's/^g//')
+          BASE=$(echo "$WITHOUT_V"  | cut -d'-' -f1)
+          if [ "$COUNT" = "0" ]; then
+            VERSION="$BASE"
+          else
+            VERSION="${BASE}+${COUNT}-${HASH}-SNAPSHOT"
+          fi
+          echo "ZIO_BDD_VERSION=$VERSION" >> "$GITHUB_ENV"
+          sbt publishLocal
+
       - name: Build LSP fat jar
-        run: sbt lsp/assembly
+        run: sbt -DzioBdd.version="${ZIO_BDD_VERSION}" lsp/assembly
 
       - name: Build IntelliJ plugin
         run: cd extensions/intellij && ./gradlew buildPlugin --no-daemon

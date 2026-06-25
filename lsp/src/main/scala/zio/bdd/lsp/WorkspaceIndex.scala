@@ -49,15 +49,15 @@ final class WorkspaceIndex private (
                             if isBsp then BspWorkspaceDetector.sourceRoots(workspaceRoot)
                             else ZIO.succeed(List(workspaceRoot))
                           }
-      pairs <- ZIO.foreach(effectiveRoots)(r =>
-                 ZIO.attemptBlocking(collectFiles(Paths.get(r))).orElseSucceed((Nil, Nil))
-               )
-      (scalaFiles, featureFiles) = pairs.foldLeft((List.empty[String], List.empty[String])) {
-        case ((s, f), (si, fi)) => (s ++ si, f ++ fi)
-      }
-      _ <- ZIO.logInfo(
-             s"scanSourceRoots: ${scalaFiles.size} .scala, ${featureFiles.size} .feature (${effectiveRoots.size} root(s))"
-           )
+      pairs <-
+        ZIO.foreach(effectiveRoots)(r => ZIO.attemptBlocking(collectFiles(Paths.get(r))).orElseSucceed((Nil, Nil)))
+      (scalaFiles, featureFiles) = pairs.foldLeft((List.empty[String], List.empty[String])) { case ((s, f), (si, fi)) =>
+                                     (s ++ si, f ++ fi)
+                                   }
+      _ <-
+        ZIO.logInfo(
+          s"scanSourceRoots: ${scalaFiles.size} .scala, ${featureFiles.size} .feature (${effectiveRoots.size} root(s))"
+        )
       _ <- ZIO.foreachParDiscard(scalaFiles)(p => readFile(p).flatMap(indexScalaFile(p, _)))
       _ <- ZIO.foreachParDiscard(featureFiles)(p => readFile(p).flatMap(indexFeatureFile(p, _)))
     yield ()

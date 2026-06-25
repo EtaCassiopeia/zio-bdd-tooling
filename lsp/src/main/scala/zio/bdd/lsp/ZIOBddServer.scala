@@ -26,11 +26,11 @@ import scala.jdk.CollectionConverters.*
  * CompletableFuture boundary. All LSP handlers go through it.
  */
 final class ZIOBddServer(
-  index:   WorkspaceIndex,
+  index: WorkspaceIndex,
   runtime: Runtime[Any],
-  client:  Ref[Option[LanguageClient]],
-  ready:   Promise[Nothing, Unit],
-  bspRef:  Ref[Option[BspClient]]
+  client: Ref[Option[LanguageClient]],
+  ready: Promise[Nothing, Unit],
+  bspRef: Ref[Option[BspClient]]
 ) extends LanguageServer
     with TextDocumentService
     with WorkspaceService:
@@ -54,6 +54,7 @@ final class ZIOBddServer(
     caps.setHoverProvider(true)
     caps.setDocumentSymbolProvider(true)
     caps.setCodeLensProvider(new CodeLensOptions(false))
+    caps.setCodeActionProvider(true)
     caps.setCompletionProvider(
       new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/").asJava)
     )
@@ -132,6 +133,16 @@ final class ZIOBddServer(
     val uri = params.getTextDocument.getUri
     dispatchGated(CodeLensHandler.codeLenses(uri, currentContent(uri)).map(_.asJava))
 
+  override def codeAction(
+    params: CodeActionParams
+  ): CompletableFuture[java.util.List[JEither[Command, CodeAction]]] =
+    val uri = params.getTextDocument.getUri
+    dispatchGated(
+      CodeActionHandler
+        .codeActions(uri, params.getRange, params.getContext, currentContent(uri), index)
+        .map(_.map(a => JEither.forRight[Command, CodeAction](a)).asJava)
+    )
+
   override def documentSymbol(
     params: DocumentSymbolParams
   ): CompletableFuture[java.util.List[JEither[SymbolInformation, DocumentSymbol]]] =
@@ -166,7 +177,7 @@ final class ZIOBddServer(
     // Compile callback: re-scan using the BSP-exact source roots if available.
     val onCompile: UIO[Unit] =
       bspRef.get.flatMap {
-        case None      => index.scanSourceRoots(rootPath, Nil)
+        case None => index.scanSourceRoots(rootPath, Nil)
         case Some(bsp) =>
           bsp.sourceDirs.flatMap { dirs =>
             ZIO.logInfo(s"BSP compile — re-scanning ${dirs.size} source root(s)") *>
@@ -185,8 +196,7 @@ final class ZIOBddServer(
               // workspace/buildTargets round-trip before reading source dirs.
               ZIO.sleep(3.seconds) *>
               bsp.sourceDirs.flatMap { dirs =>
-                if dirs.isEmpty then
-                  ZIO.logInfo("BSP: no source roots yet; heuristic initial scan continues")
+                if dirs.isEmpty then ZIO.logInfo("BSP: no source roots yet; heuristic initial scan continues")
                 else
                   ZIO.logInfo(s"BSP: updating index with ${dirs.size} exact source root(s)") *>
                     index.scanSourceRoots(rootPath, dirs)
