@@ -116,9 +116,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('zio-bdd.refreshSidebar', () => sidebar.refresh()),
   );
   const featureWatcher = vscode.workspace.createFileSystemWatcher('**/*.feature');
-  featureWatcher.onDidCreate(() => sidebar.refresh());
-  featureWatcher.onDidChange(() => sidebar.refresh());
-  featureWatcher.onDidDelete(() => sidebar.refresh());
+  const notInBuildDir = (uri: vscode.Uri) =>
+    !/[/\\](target|node_modules|\.bloop|\.metals|\.bsp|out)[/\\]/.test(uri.fsPath);
+  featureWatcher.onDidCreate(uri => { if (notInBuildDir(uri)) sidebar.refresh(); });
+  featureWatcher.onDidChange(uri => { if (notInBuildDir(uri)) sidebar.refresh(); });
+  featureWatcher.onDidDelete(uri => { if (notInBuildDir(uri)) sidebar.refresh(); });
   context.subscriptions.push(featureWatcher);
 
   context.subscriptions.push({ dispose: () => client?.stop() });

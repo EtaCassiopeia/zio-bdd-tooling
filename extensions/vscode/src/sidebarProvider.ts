@@ -93,9 +93,15 @@ export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
   }
 
   private async _scan(): Promise<FeatureItem[]> {
-    const uris = await vscode.workspace.findFiles('**/*.feature', '**/node_modules/**');
+    const uris = await vscode.workspace.findFiles(
+      '**/*.feature',
+      '{**/target/**,**/node_modules/**,**/.bloop/**,**/.metals/**,**/.bsp/**,**/out/**}',
+    );
+    const seen  = new Set<string>();
     const items: FeatureItem[] = [];
     for (const uri of uris) {
+      if (seen.has(uri.fsPath)) continue;
+      seen.add(uri.fsPath);
       try {
         const raw = fs.readFileSync(uri.fsPath, 'utf8');
         const item = parseFeature(uri, raw);
@@ -124,6 +130,7 @@ body {
   line-height: 1.5;
 }
 
+/* ── header ──────────────────────────────────────────────────────────────── */
 .header {
   position: sticky;
   top: 0;
@@ -136,11 +143,7 @@ body {
   border-bottom: 1px solid #21262d;
 }
 
-.logo {
-  color: #6366f1;
-  font-size: 13px;
-  margin-right: 2px;
-}
+.logo { color: #6366f1; font-size: 13px; margin-right: 2px; }
 
 .header-title {
   flex: 1;
@@ -164,6 +167,7 @@ body {
   align-items: center;
 }
 .icon-btn:hover { background: #21262d; color: #c9d1d9; }
+#filter-btn.active { color: #388bfd; }
 
 .run-all-btn {
   background: #1f6feb22;
@@ -181,6 +185,114 @@ body {
 }
 .run-all-btn:hover { background: #1f6feb44; }
 
+/* ── filter bar ──────────────────────────────────────────────────────────── */
+.filter-bar {
+  position: sticky;
+  top: 37px;
+  z-index: 9;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+}
+.filter-bar.hidden { display: none; }
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px 10px;
+  min-height: 30px;
+  position: relative;
+}
+
+/* tag chips in the filter row */
+.f-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px 0 7px;
+  height: 20px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid transparent;
+  transition: filter .1s;
+}
+.f-chip.inc { background: #1e3a5f; color: #7dd3fc; border-color: #1f6feb33; }
+.f-chip.exc { background: #2a0d0d; color: #fca5a5; border-color: #7f1d1d44; }
+.f-chip:hover { filter: brightness(1.2); }
+.f-chip-x {
+  background: none; border: none; color: inherit; cursor: pointer;
+  padding: 0 2px 0 2px; font-size: 12px; line-height: 1; opacity: 0.55;
+  display: flex; align-items: center;
+}
+.f-chip-x:hover { opacity: 1; }
+
+/* "＋ tag" button */
+.f-add {
+  background: none;
+  border: 1px dashed #30363d;
+  color: #6e7681;
+  cursor: pointer;
+  padding: 0 8px;
+  height: 20px;
+  border-radius: 10px;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.f-add:hover { border-color: #8b949e; color: #c9d1d9; }
+
+/* "✕ clear" button */
+.f-clear {
+  margin-left: auto;
+  background: none; border: none;
+  color: #6e7681; cursor: pointer;
+  font-size: 10px; padding: 1px 4px;
+  border-radius: 3px; flex-shrink: 0;
+}
+.f-clear:hover { color: #fca5a5; }
+
+/* tag dropdown */
+.tag-drop {
+  position: absolute;
+  top: 100%; left: 0; right: 0;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 20;
+  box-shadow: 0 4px 10px #0006;
+}
+.tag-drop.hidden { display: none; }
+
+.drop-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #c9d1d9;
+  gap: 6px;
+}
+.drop-item:hover { background: #21262d; }
+.di-tag { flex: 1; }
+.di-state {
+  font-size: 9px; padding: 0 6px; height: 16px;
+  border-radius: 8px; display: flex; align-items: center; font-weight: 600;
+}
+.drop-item.di-inc { color: #7dd3fc; }
+.drop-item.di-inc .di-state { background: #1e3a5f; color: #7dd3fc; }
+.drop-item.di-exc { color: #fca5a5; }
+.drop-item.di-exc .di-state { background: #2a0d0d; color: #fca5a5; }
+.drop-empty { padding: 10px 12px; font-size: 11px; color: #6e7681; text-align: center; }
+
+/* ── stats bar ───────────────────────────────────────────────────────────── */
 .stats {
   padding: 5px 12px;
   font-size: 11px;
@@ -190,18 +302,10 @@ body {
   gap: 10px;
 }
 
-.stat-chip {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
+.stat-chip { display: flex; align-items: center; gap: 4px; }
+.stat-dot { width: 6px; height: 6px; border-radius: 50%; }
 
-.stat-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
+/* ── feature list ────────────────────────────────────────────────────────── */
 .feature-section { border-bottom: 1px solid #21262d; }
 
 .feature-header {
@@ -264,11 +368,8 @@ body {
 .scenario-row:hover .sc-run { opacity: 1; }
 
 .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-top: 4px;
-  flex-shrink: 0;
+  width: 7px; height: 7px; border-radius: 50%;
+  margin-top: 4px; flex-shrink: 0;
 }
 .dot-active   { background: #238636; }
 .dot-outline  { background: #1f6feb; }
@@ -290,26 +391,18 @@ body {
 .sc-name.ignored { color: #4d555e; text-decoration: line-through; }
 
 .outline-pill {
-  font-size: 8px;
-  font-weight: 600;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: #1f6feb22;
-  color: #7dd3fc;
-  border: 1px solid #1f6feb44;
-  letter-spacing: .04em;
-  flex-shrink: 0;
+  font-size: 8px; font-weight: 600; padding: 0 4px; border-radius: 3px;
+  background: #1f6feb22; color: #7dd3fc; border: 1px solid #1f6feb44;
+  letter-spacing: .04em; flex-shrink: 0;
 }
 
 .tag-row { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
 
 .tag {
-  font-size: 9px;
-  font-weight: 500;
-  padding: 0 5px;
-  border-radius: 10px;
-  letter-spacing: .03em;
+  font-size: 9px; font-weight: 500; padding: 0 5px;
+  border-radius: 10px; letter-spacing: .03em; cursor: pointer;
 }
+.tag:hover { filter: brightness(1.3); }
 .t-smoke      { background: #064e3b; color: #6ee7b7; }
 .t-regression { background: #1e3a5f; color: #7dd3fc; }
 .t-negative   { background: #450a0a; color: #fca5a5; }
@@ -320,35 +413,20 @@ body {
 
 .sc-run {
   opacity: 0;
-  background: none;
-  border: none;
-  color: #388bfd;
-  cursor: pointer;
-  font-size: 10px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  transition: opacity .12s;
-  flex-shrink: 0;
-  margin-top: 1px;
+  background: none; border: none; color: #388bfd; cursor: pointer;
+  font-size: 10px; padding: 1px 4px; border-radius: 3px;
+  transition: opacity .12s; flex-shrink: 0; margin-top: 1px;
 }
 .sc-run:hover { background: #1f6feb33; }
 
 .empty {
-  padding: 32px 16px;
-  text-align: center;
-  color: #6e7681;
-  font-size: 11px;
-  line-height: 1.8;
+  padding: 32px 16px; text-align: center;
+  color: #6e7681; font-size: 11px; line-height: 1.8;
 }
 
 .spinner-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px 16px;
-  color: #6e7681;
-  font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; padding: 32px 16px; color: #6e7681; font-size: 11px;
 }
 </style>
 </head>
@@ -358,7 +436,15 @@ body {
   <span class="logo">◈</span>
   <span class="header-title">Scenario Explorer</span>
   <button class="icon-btn" id="refresh-btn" title="Refresh">↻</button>
+  <button class="icon-btn" id="filter-btn" title="Filter by tag">⊝</button>
   <button class="run-all-btn" id="run-all-btn" title="Run all tests">▶ All</button>
+</div>
+
+<div class="filter-bar hidden" id="filter-bar">
+  <div class="filter-row" id="filter-row">
+    <!-- chips + controls rendered by renderFilterBar() -->
+  </div>
+  <div class="tag-drop hidden" id="tag-drop"></div>
 </div>
 
 <div class="stats" id="stats"></div>
@@ -366,31 +452,95 @@ body {
 
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-let features = [];
-let collapsed = new Set();
+let features  = [];
+let collapsed = new Set(); // stores feature URIs
 
-const featRoot = document.getElementById('features');
-const statsEl  = document.getElementById('stats');
+// ── filter state ──────────────────────────────────────────────────────────
+let includeTags    = new Set();
+let excludeTags    = new Set();
+let filterBarOpen  = false; // whether the bar is user-toggled open (independent of hasFilter)
 
-// ── message bus ──────────────────────────────────────────────────────────────
+const filterBarEl = document.getElementById('filter-bar');
+const filterRowEl = document.getElementById('filter-row');
+const tagDropEl   = document.getElementById('tag-drop');
+const filterBtn   = document.getElementById('filter-btn');
+const featRoot    = document.getElementById('features');
+const statsEl     = document.getElementById('stats');
+
+// ── message bus ───────────────────────────────────────────────────────────
 window.addEventListener('message', e => {
   const msg = e.data;
   if (msg.type === 'update') { features = msg.features; render(); }
 });
 
-// ── toolbar ───────────────────────────────────────────────────────────────────
+// ── toolbar ───────────────────────────────────────────────────────────────
 document.getElementById('refresh-btn').addEventListener('click', () =>
   vscode.postMessage({ type: 'refresh' }));
 
 document.getElementById('run-all-btn').addEventListener('click', () =>
   vscode.postMessage({ type: 'runAll' }));
 
-// ── event delegation ──────────────────────────────────────────────────────────
+// Filter button: toggle bar open; if just opened and no chips exist, open dropdown
+filterBtn.addEventListener('click', () => {
+  filterBarOpen = !filterBarOpen;
+  syncFilterBar();
+  if (filterBarOpen && !hasFilter()) openDrop();
+  else closeDrop();
+});
+
+// Close dropdown when clicking outside the filter bar
+document.addEventListener('click', e => {
+  if (!e.target.closest('#filter-bar') && !e.target.closest('#filter-btn')) closeDrop();
+});
+
+// ── filter bar event delegation ───────────────────────────────────────────
+filterBarEl.addEventListener('click', e => {
+  // Remove chip
+  const rmBtn = e.target.closest('[data-rm]');
+  if (rmBtn) { e.stopPropagation(); removeTag(rmBtn.dataset.rm); return; }
+
+  // Toggle chip mode (click chip body, not the × button)
+  const chip = e.target.closest('.f-chip[data-tag]');
+  if (chip) { e.stopPropagation(); toggleChipMode(chip.dataset.tag); return; }
+
+  // Click dropdown item
+  const dropItem = e.target.closest('[data-add]');
+  if (dropItem) { e.stopPropagation(); clickDropItem(dropItem.dataset.add); return; }
+
+  // Click "＋ tag" button (it's inside filter-row so bubbles up here)
+  if (e.target.id === 'f-add') { e.stopPropagation(); toggleDrop(); return; }
+
+  // Click "✕ clear" button
+  if (e.target.id === 'f-clear') { e.stopPropagation(); clearAllFilters(); return; }
+});
+
+// Clicking a scenario tag pill directly adds it as an include filter
 featRoot.addEventListener('click', e => {
-  const target = e.target;
+  const tagPill = e.target.closest('[data-filter-tag]');
+  if (tagPill) {
+    e.stopPropagation();
+    const tag = tagPill.dataset.filterTag;
+    if (!includeTags.has(tag) && !excludeTags.has(tag)) {
+      includeTags.add(tag);
+      filterBarOpen = true;
+      syncFilterBar();
+      renderFilterBar();
+      render();
+    }
+    return;
+  }
+
+  // Toggle feature
+  const featHdr = e.target.closest('[data-feat-uri]');
+  if (featHdr && !e.target.closest('[data-feat-run]') && !e.target.closest('[data-filter-tag]')) {
+    const uri = featHdr.dataset.featUri;
+    if (collapsed.has(uri)) collapsed.delete(uri); else collapsed.add(uri);
+    render();
+    return;
+  }
 
   // Run feature
-  const featRun = target.closest('[data-feat-run]');
+  const featRun = e.target.closest('[data-feat-run]');
   if (featRun) {
     e.stopPropagation();
     vscode.postMessage({ type: 'runFeature', fsPath: featRun.dataset.featRun });
@@ -398,62 +548,180 @@ featRoot.addEventListener('click', e => {
   }
 
   // Run scenario
-  const scRun = target.closest('[data-sc-run]');
+  const scRun = e.target.closest('[data-sc-run]');
   if (scRun) {
     e.stopPropagation();
     vscode.postMessage({ type: 'runScenario', scenarioName: scRun.dataset.scRun });
     return;
   }
 
-  // Toggle feature
-  const featHdr = target.closest('[data-feat-idx]');
-  if (featHdr && 'featIdx' in featHdr.dataset) {
-    const idx = featHdr.dataset.featIdx;
-    if (collapsed.has(idx)) collapsed.delete(idx);
-    else collapsed.add(idx);
-    render();
-    return;
-  }
-
   // Open file at scenario
-  const scRow = target.closest('[data-uri]');
-  if (scRow) {
+  const scRow = e.target.closest('[data-uri]');
+  if (scRow && !e.target.closest('[data-filter-tag]')) {
     vscode.postMessage({ type: 'openFile', uri: scRow.dataset.uri, line: Number(scRow.dataset.line) });
   }
 });
 
-// ── render ────────────────────────────────────────────────────────────────────
+// ── filter helpers ────────────────────────────────────────────────────────
+function hasFilter() { return includeTags.size > 0 || excludeTags.size > 0; }
+
+function syncFilterBar() {
+  const show = filterBarOpen || hasFilter();
+  filterBarEl.classList.toggle('hidden', !show);
+  filterBtn.classList.toggle('active', hasFilter());
+}
+
+function renderFilterBar() {
+  const incChips = [...includeTags].map(t =>
+    '<span class="f-chip inc" data-tag="' + esc(t) + '" title="Click to switch to exclude">+ @' + esc(t) +
+    '<button class="f-chip-x" data-rm="' + esc(t) + '" title="Remove filter">×</button></span>'
+  ).join('');
+  const excChips = [...excludeTags].map(t =>
+    '<span class="f-chip exc" data-tag="' + esc(t) + '" title="Click to switch to include">− @' + esc(t) +
+    '<button class="f-chip-x" data-rm="' + esc(t) + '" title="Remove filter">×</button></span>'
+  ).join('');
+
+  filterRowEl.innerHTML =
+    incChips + excChips +
+    '<button class="f-add" id="f-add" title="Add tag filter">＋ tag</button>' +
+    (hasFilter() ? '<button class="f-clear" id="f-clear">✕ clear</button>' : '');
+}
+
+function removeTag(tag) {
+  includeTags.delete(tag);
+  excludeTags.delete(tag);
+  if (!hasFilter()) filterBarOpen = false;
+  closeDrop();
+  syncFilterBar();
+  renderFilterBar();
+  render();
+}
+
+function toggleChipMode(tag) {
+  if (includeTags.has(tag)) { includeTags.delete(tag); excludeTags.add(tag); }
+  else if (excludeTags.has(tag)) { excludeTags.delete(tag); includeTags.add(tag); }
+  renderFilterBar();
+  renderDrop();
+  render();
+}
+
+function clearAllFilters() {
+  includeTags.clear();
+  excludeTags.clear();
+  filterBarOpen = false;
+  closeDrop();
+  syncFilterBar();
+  renderFilterBar();
+  render();
+}
+
+// ── dropdown ──────────────────────────────────────────────────────────────
+function openDrop() { renderDrop(); tagDropEl.classList.remove('hidden'); }
+function closeDrop() { tagDropEl.classList.add('hidden'); }
+function toggleDrop() {
+  if (tagDropEl.classList.contains('hidden')) openDrop(); else closeDrop();
+}
+
+function renderDrop() {
+  const tags = allUniqueTags();
+  if (tags.length === 0) {
+    tagDropEl.innerHTML = '<div class="drop-empty">No tags found in any feature file</div>';
+    return;
+  }
+  tagDropEl.innerHTML = tags.map(t => {
+    const inc = includeTags.has(t), exc = excludeTags.has(t);
+    const cls  = inc ? ' di-inc' : exc ? ' di-exc' : '';
+    const badge = inc ? '<span class="di-state">include</span>'
+                : exc ? '<span class="di-state">exclude</span>' : '';
+    return '<div class="drop-item' + cls + '" data-add="' + esc(t) + '">' +
+             '<span class="di-tag">@' + esc(t) + '</span>' + badge +
+           '</div>';
+  }).join('');
+}
+
+// Cycles through: not in filter → include → exclude → remove
+function clickDropItem(tag) {
+  if (!includeTags.has(tag) && !excludeTags.has(tag)) includeTags.add(tag);
+  else if (includeTags.has(tag)) { includeTags.delete(tag); excludeTags.add(tag); }
+  else excludeTags.delete(tag);
+  syncFilterBar();
+  renderFilterBar();
+  renderDrop();
+  render();
+}
+
+function allUniqueTags() {
+  const s = new Set();
+  features.forEach(f => {
+    f.tags.forEach(t => s.add(t));
+    f.scenarios.forEach(sc => sc.tags.forEach(t => s.add(t)));
+  });
+  return [...s].sort();
+}
+
+// ── filtering ─────────────────────────────────────────────────────────────
+function passesFilter(scenario, feature) {
+  const tags = new Set([...scenario.tags, ...feature.tags]);
+  if (excludeTags.size > 0 && [...excludeTags].some(t => tags.has(t))) return false;
+  if (includeTags.size === 0) return true;
+  return [...includeTags].some(t => tags.has(t));
+}
+
+function filteredFeatures() {
+  if (!hasFilter()) return features;
+  return features
+    .map(f => ({ ...f, scenarios: f.scenarios.filter(s => passesFilter(s, f)) }))
+    .filter(f => f.scenarios.length > 0);
+}
+
+// ── render ────────────────────────────────────────────────────────────────
 function render() {
-  const total   = features.reduce((n, f) => n + f.scenarios.length, 0);
-  const ignored = features.reduce((n, f) => n + f.scenarios.filter(s => s.isIgnored).length, 0);
-  const active  = total - ignored;
+  renderFilterBar();
+  syncFilterBar();
 
-  statsEl.innerHTML =
-    chip('#238636', active  + ' active') + ' ' +
-    chip('#4d555e', ignored + ' skipped');
+  const visible  = filteredFeatures();
+  const isFiltered = hasFilter();
+  const total    = visible.reduce((n, f) => n + f.scenarios.length, 0);
+  const ignored  = visible.reduce((n, f) => n + f.scenarios.filter(s => s.isIgnored).length, 0);
+  const active   = total - ignored;
 
-  if (features.length === 0) {
-    featRoot.innerHTML =
-      '<div class="empty">No .feature files found.<br>Add one to see your scenarios here.</div>';
+  if (isFiltered) {
+    const allTotal   = features.reduce((n, f) => n + f.scenarios.length, 0);
+    const allIgnored = features.reduce((n, f) => n + f.scenarios.filter(s => s.isIgnored).length, 0);
+    statsEl.innerHTML =
+      chip('#388bfd', 'filtered') + ' ' +
+      chip('#238636', active + ' of ' + (allTotal - allIgnored) + ' active') + ' ' +
+      chip('#4d555e', ignored + ' skipped');
+  } else {
+    statsEl.innerHTML =
+      chip('#238636', active + ' active') + ' ' +
+      chip('#4d555e', ignored + ' skipped');
+  }
+
+  if (visible.length === 0) {
+    featRoot.innerHTML = features.length === 0
+      ? '<div class="empty">No .feature files found.<br>Add one to see your scenarios here.</div>'
+      : '<div class="empty">No scenarios match the active filters.<br><small style="opacity:.6">Try removing or changing a filter.</small></div>';
     return;
   }
 
-  featRoot.innerHTML = features.map(renderFeature).join('');
+  featRoot.innerHTML = visible.map(renderFeature).join('');
 }
 
 function chip(color, label) {
   return '<span class="stat-chip"><span class="stat-dot" style="background:' + color + '"></span>' + esc(label) + '</span>';
 }
 
-function renderFeature(f, i) {
-  const idx  = String(i);
-  const open = !collapsed.has(idx);
-  const featTags = f.tags.map(t => '<span class="tag t-feature">' + esc(t) + '</span>').join('');
-  const body = open ? f.scenarios.map(s => renderScenario(s, f.uri, f.name)).join('') : '';
+function renderFeature(f) {
+  const open     = !collapsed.has(f.uri);
+  const featTags = f.tags.map(t =>
+    '<span class="tag t-feature" data-filter-tag="' + esc(t) + '" title="Filter by @' + esc(t) + '">' + esc(t) + '</span>'
+  ).join('');
+  const body = open ? f.scenarios.map(s => renderScenario(s, f.uri)).join('') : '';
 
   return (
     '<div class="feature-section">' +
-    '<div class="feature-header" data-feat-idx="' + idx + '" title="' + esc(f.fsPath) + '">' +
+    '<div class="feature-header" data-feat-uri="' + esc(f.uri) + '" title="' + esc(f.fsPath) + '">' +
       '<span class="chevron">' + (open ? '▾' : '▸') + '</span>' +
       '<span class="feat-name">' + esc(f.name) + '</span>' +
       '<div class="feat-tags">' + featTags + '</div>' +
@@ -465,7 +733,7 @@ function renderFeature(f, i) {
   );
 }
 
-function renderScenario(s, featureUri, featureName) {
+function renderScenario(s, featureUri) {
   const ignored = s.isIgnored;
   const dotCls  = ignored ? 'dot-ignored'
                 : s.tags.some(t => /^property/i.test(t)) ? 'dot-property'
@@ -476,8 +744,9 @@ function renderScenario(s, featureUri, featureName) {
   const outline = s.isOutline ? '<span class="outline-pill">OUTLINE</span>' : '';
 
   const tags = s.tags
-    .map(t => '<span class="tag ' + tagCls(t) + '">' + esc(t) + '</span>')
-    .join('');
+    .map(t =>
+      '<span class="tag ' + tagCls(t) + '" data-filter-tag="' + esc(t) + '" title="Filter by @' + esc(t) + '">' + esc(t) + '</span>'
+    ).join('');
 
   return (
     '<div class="scenario-row" data-uri="' + esc(featureUri) + '" data-line="' + s.line + '">' +
