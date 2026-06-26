@@ -2,20 +2,19 @@ name: Release
 
 on:
   push:
+    branches: ["**"]
+    tags: ["**"]
 
 permissions:
   contents: write
 
 jobs:
-  # ── Guard: ensures the workflow shows "success" on non-tag pushes ────────────
-  # When GitHub fires this workflow unexpectedly (e.g. a branch push slips past
-  # the tag filter), all downstream jobs are skipped.  GitHub marks a run with
-  # zero successful jobs as "failure", so this no-op job keeps the status green.
+  # ── Guard: ensures the workflow always has at least one successful job ────────
+  # GitHub marks a run with zero successful jobs as "failure". On non-tag pushes
+  # (where all downstream jobs are skipped) this guard keeps the run green.
   guard:
     name: Release guard
     runs-on: ubuntu-latest
-    outputs:
-      is_tag: ${{ github.ref_type == 'tag' }}
     steps:
       - name: Check trigger
         run: echo "ref=${{ github.ref }} ref_type=${{ github.ref_type }}"
