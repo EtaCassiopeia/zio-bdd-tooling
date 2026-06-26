@@ -27,9 +27,9 @@ object DiagnosticsHandler:
         case Right(feature) =>
           for
             scenario <- feature.scenarios
-            if !scenario.isIgnored  // skip @ignore scenarios — unmatched steps there are intentional
-            step     <- scenario.steps
-            diag     <- diagnosticFor(step, allDefs, sourceLines)
+            if !scenario.isIgnored // skip @ignore scenarios — unmatched steps there are intentional
+            step <- scenario.steps
+            diag <- diagnosticFor(step, allDefs, sourceLines)
           yield diag
     }
 
