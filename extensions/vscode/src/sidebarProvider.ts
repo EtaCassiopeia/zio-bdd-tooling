@@ -553,6 +553,15 @@ body {
 
 .view-toggle-btn.suite-active { color: #3fb950; }
 
+/* Tree-line + indentation when features sit inside a suite group */
+.suite-body {
+  border-left: 1px solid #2d333b;
+  margin-left: 12px;
+}
+.suite-section .feature-section { border-bottom: none; }
+.suite-section .feature-header  { padding-left: 18px; background: #0d1117; }
+.suite-section .scenario-row    { padding-left: 34px; }
+
 .empty {
   padding: 32px 16px; text-align: center;
   color: #6e7681; font-size: 11px; line-height: 1.8;
@@ -907,7 +916,7 @@ function renderBySuite(visible) {
           '<span class="suite-badge">' + groupFeats.length + (groupFeats.length === 1 ? ' feature · ' : ' features · ') + scenCount + ' scenarios</span>' +
           '<button class="suite-run" data-suite-run="' + esc(group.suiteName) + '" title="Run ' + esc(group.suiteName) + '">▶</button>' +
         '</div>' +
-        '<div>' + body + '</div>' +
+        '<div class="suite-body">' + body + '</div>' +
       '</div>';
   }
 
@@ -922,7 +931,7 @@ function renderBySuite(visible) {
           '<span class="suite-name">Unassigned</span>' +
           '<span class="suite-badge">' + unassigned.length + (unassigned.length === 1 ? ' feature' : ' features') + '</span>' +
         '</div>' +
-        '<div>' + body + '</div>' +
+        '<div class="suite-body">' + body + '</div>' +
       '</div>';
   }
 
