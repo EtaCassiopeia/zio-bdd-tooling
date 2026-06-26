@@ -1,9 +1,6 @@
 name: Release
 
-on:
-  push:
-    branches: ["**"]
-    tags: ["**"]
+on: push
 
 permissions:
   contents: write
@@ -66,11 +63,11 @@ jobs:
         run: |
           RELEASE_VERSION="${GITHUB_REF_NAME#v}"
           echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
-          # Stamp VS Code package.json
+          # Stamp VS Code package.json using env var (avoids shell expansion inside node string)
           node -e "
             const fs = require('fs');
             const p  = JSON.parse(fs.readFileSync('extensions/vscode/package.json'));
-            p.version = '${RELEASE_VERSION}';
+            p.version = process.env.RELEASE_VERSION;
             fs.writeFileSync('extensions/vscode/package.json', JSON.stringify(p, null, 2) + '\n');
           "
           # Stamp IntelliJ build.gradle.kts
@@ -158,12 +155,15 @@ jobs:
           vsce publish --pat "${{ secrets.VSCE_PAT }}" --packagePath vsix/zio-bdd-*.vsix
 
       - name: Publish to Open VSX
-        if: ${{ secrets.OVSX_PAT != '' }}
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
-          npm install -g ovsx
-          ovsx publish vsix/zio-bdd-*.vsix --pat "${OVSX_PAT}"
+          if [ -n "${OVSX_PAT}" ]; then
+            npm install -g ovsx
+            ovsx publish vsix/zio-bdd-*.vsix --pat "${OVSX_PAT}"
+          else
+            echo "OVSX_PAT not set, skipping Open VSX publish"
+          fi
 
   # ── Sign and publish IntelliJ plugin ────────────────────────────────────────
   publish-intellij:
