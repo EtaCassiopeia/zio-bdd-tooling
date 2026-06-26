@@ -59,19 +59,17 @@ Three protocols cooperate to give accurate, low-latency feedback:
 | `textDocument/codeAction` | "Create step definition" action |
 | `textDocument/documentSymbol` | File outline for `.feature` files |
 
-**VS Code** uses this server as its primary intelligence layer — LSP was designed by Microsoft for VS Code and is the idiomatic path there. The extension is a thin LSP client plus a TextMate grammar for syntax highlighting.
+**VS Code** uses this server as its primary intelligence layer. The extension is a thin LSP client plus a TextMate grammar for syntax highlighting.
 
-**IntelliJ** replaces the LSP for all editor features with a native PSI implementation. The LSP server still runs via BSP — it's the jar that the BSP class-loading subprocess uses.
+**IntelliJ** replaces the LSP for all editor features with a native PSI implementation. The LSP server still runs in the background via BSP for class-loading.
 
 ### BSP — Build Server Protocol
 
-BSP is editor-agnostic (developed by JetBrains + Scala Center, used by Metals/sbt/Bloop). After each `sbt compile`, `BspClient` connects to the project's existing BSP socket, reads the exact source roots and test classpath, then launches `StepLoader` as a subprocess. `StepLoader` loads each `ZIOSteps` subclass via reflection and calls `ZIOSteps.allDefinitions` to get runtime-authoritative step patterns, which upgrade the static-scan results in `WorkspaceIndex`.
-
-Both IntelliJ and VS Code (via the LSP server) use this path. The IntelliJ plugin also has a direct `BspStepLoader` that does the same subprocess launch using `OrderEnumerator` for the classpath.
+After each `sbt compile`, `BspClient` connects to the project's existing BSP socket, reads the exact source roots and test classpath, then launches `StepLoader` as a subprocess. `StepLoader` loads each `ZIOSteps` subclass via reflection and calls `ZIOSteps.allDefinitions` to get runtime-authoritative step patterns, which upgrade the static-scan results in `WorkspaceIndex`.
 
 ### PSI — Program Structure Interface (IntelliJ-only)
 
-PSI is JetBrains' proprietary API for typed source element trees. The IntelliJ plugin has a full native PSI implementation — no external plugins required:
+The IntelliJ plugin has a full native PSI implementation — no external plugins required:
 
 | Layer | What it does |
 |-------|-------------|
@@ -99,18 +97,6 @@ PSI is JetBrains' proprietary API for typed source element trees. The IntelliJ p
 | Run scenario | VS Code Test Explorer | Run configurations + gutter ▶ icons |
 | External plugin dependency | None | None |
 
-VS Code is better suited to LSP — the extension is trivially thin and the heavy logic lives in the server. IntelliJ requires the native API for run configurations, gutter icons, and precise PSI manipulation.
-
-## Design notes
-
-### Runtime accuracy via BSP class-loading
-
-Static source scanning gives immediate results without compiling but approximates extractor patterns from source text. After each `sbt compile`, `BspClassLoader` launches `StepLoader` on the test classpath. `StepLoader` loads each `ZIOSteps` subclass via reflection and calls `ZIOSteps.allDefinitions` to get runtime-authoritative `StepSummary` records. `WorkspaceIndex.mergeRuntimeSteps` then upgrades the static scan results.
-
-### No hand-copied extractor patterns
-
-Built-in extractor patterns are resolved from `zio.bdd.core.step.DefaultTypedExtractor.byName` in the zio-bdd core — one source of truth, no risk of silent drift.
-
 ## Building
 
 See [BUILDING.md](BUILDING.md) for full instructions.
@@ -125,8 +111,10 @@ cd extensions/intellij && ./gradlew buildPlugin         # IntelliJ plugin
 
 ## Releasing
 
+Tooling versions are kept in sync with zio-bdd core. Tag with the matching version:
+
 ```sh
-git tag v0.1.0 && git push --tags
+git tag v1.1.0 && git push --tags
 ```
 
 Triggers the release pipeline: build → GitHub release → VS Code Marketplace → JetBrains Marketplace. See [BUILDING.md § Releasing](BUILDING.md#releasing) for required secrets.
