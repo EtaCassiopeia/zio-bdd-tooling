@@ -126,25 +126,66 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
 
-        // Multiple usages: show in VS Code's references peek panel.
-        // Double-clicking a result in the peek panel navigates to the file.
-        // We pass our own locations (from the direct LSP call above) so Metals
-        // Scala-symbol references don't get mixed in.
+        // Multiple usages — two ways to navigate:
+        //
+        // 1. QuickPick: hover/arrow key previews the file (preview tab, focus stays
+        //    in QuickPick); clicking an item or pressing Enter opens it permanently.
+        //    This is the "double-click" feel: first interaction previews, second confirms.
+        //
+        // 2. Peek panel: the QuickPick also passes locations to
+        //    editor.action.showReferences so the inline peek stays open behind it.
+        //    Double-clicking any entry in the peek navigates directly.
         const vsLocs = lspLocs.map(loc =>
           new vscode.Location(
             vscode.Uri.parse(loc.uri),
             new vscode.Range(
               new vscode.Position(loc.range.start.line, 0),
-              new vscode.Position(loc.range.start.line, 0),
+              new vscode.Position(loc.range.start.line, 1000), // highlight line in peek preview
             )
           )
         );
-        await vscode.commands.executeCommand(
+
+        // Show peek panel first so it's visible behind the QuickPick
+        void vscode.commands.executeCommand(
           'editor.action.showReferences',
           vscode.Uri.parse(uriStr),
           new vscode.Position(line, character),
           vsLocs,
         );
+
+        type Item = vscode.QuickPickItem & { loc: LspLoc };
+        const items: Item[] = lspLocs.map(loc => ({
+          label:              `$(file) ${path.basename(loc.uri.replace(/^file:\/\//, ''))}`,
+          description:        path.dirname(loc.uri.replace(/^file:\/\//, '')),
+          detail:             `Line ${loc.range.start.line + 1}`,
+          loc,
+        }));
+
+        const qp = vscode.window.createQuickPick<Item>();
+        qp.items              = items;
+        qp.placeholder        = `${lspLocs.length} usages — hover to preview · Enter or click to open`;
+        qp.matchOnDescription = true;
+        qp.matchOnDetail      = true;
+
+        qp.onDidChangeActive(active => {
+          if (!active[0]) return;
+          vscode.window.showTextDocument(vscode.Uri.parse(active[0].loc.uri), {
+            selection: new vscode.Range(
+              new vscode.Position(active[0].loc.range.start.line, 0),
+              new vscode.Position(active[0].loc.range.start.line, 0),
+            ),
+            preview:       true,  // italic tab title — discarded on next open
+            preserveFocus: true,  // keep focus in QuickPick
+          });
+        });
+
+        qp.onDidAccept(async () => {
+          const [chosen] = qp.activeItems;
+          qp.hide();
+          if (chosen) await open(chosen.loc);
+        });
+
+        qp.show();
       }
     )
   );
