@@ -71,6 +71,10 @@
         "command": "zio-bdd.refreshSidebar",
         "title": "zio-bdd: Refresh Scenario Explorer",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "zio-bdd.findStepUsages",
+        "title": "zio-bdd: Find Step Usages"
       }
     ],
     "menus": {

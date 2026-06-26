@@ -83,6 +83,23 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  // Handler for "N usages" code-lens buttons on Scala step definitions.
+  // Calls the LSP references provider at the step's position and shows
+  // results in the VS Code References panel.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'zio-bdd.findStepUsages',
+      async (uriStr: string, line: number, character: number) => {
+        const uri = vscode.Uri.parse(uriStr);
+        const pos = new vscode.Position(line, character);
+        const locs = await vscode.commands.executeCommand<vscode.Location[]>(
+          'vscode.executeReferenceProvider', uri, pos,
+        );
+        await vscode.commands.executeCommand('editor.action.showReferences', uri, pos, locs ?? []);
+      }
+    )
+  );
+
   registerCommands(context, client, outputChannel, statusBarItem);
   registerTestController(context, client);
 

@@ -3,33 +3,54 @@ package zio.bdd.lsp.handlers
 import org.eclipse.lsp4j.*
 import zio.*
 import zio.bdd.gherkin.{Feature, Scenario}
-import zio.bdd.lsp.GherkinBridge
+import zio.bdd.lsp.{GherkinBridge, StepExtractor, WorkspaceIndex}
 
 import scala.jdk.CollectionConverters.*
 
 /**
- * textDocument/codeLens — "▶ Run feature" / "▶ Run scenario" above the
- * `Feature:` / `Scenario:` lines of a .feature file.
+ * textDocument/codeLens for .feature and .scala files.
  *
- * Each lens runs `zio-bdd.runCommand` (registered by the VSCode client in
- * extension.ts) with an sbt command using zio-bdd's real CLI flags
- * (`--feature-file`, `--scenario-name`; see docs/running.md) — not a synthetic
- * command the runtime wouldn't understand. `testOnly *` matches whichever test
- * classes are on the workspace's test classpath; precise enough since
- * `--feature-file` narrows to this exact file.
+ * .feature files: "▶ Run feature" / "▶ Run scenario" above Feature/Scenario
+ * lines. Each lens runs `zio-bdd.runCommand` via the VS Code client.
+ *
+ * .scala files: "N usages" above every Given/When/Then step-definition call.
+ * Clicking a usage lens invokes `zio-bdd.findStepUsages`, which calls the LSP
+ * references provider and shows results in the VS Code References panel.
  *
  * Note: Gherkin parser line numbers are 1-based; LSP positions are 0-based.
+ * StepExtractor line numbers are 0-based (count newlines from start).
  */
 object CodeLensHandler:
 
-  def codeLenses(uri: String, content: String): UIO[List[CodeLens]] =
-    ZIO.succeed {
-      GherkinBridge.parseFeature(content, uri) match
-        case Left(_) => Nil
-        case Right(feature) =>
-          val path = uri.stripPrefix("file://")
-          featureLens(feature, path) :: feature.scenarios.map(scenarioLens(_, path))
-    }
+  def codeLenses(uri: String, content: String, index: WorkspaceIndex): UIO[List[CodeLens]] =
+    if uri.endsWith(".scala") then scalaLenses(uri, content, index)
+    else
+      ZIO.succeed {
+        GherkinBridge.parseFeature(content, uri) match
+          case Left(_) => Nil
+          case Right(feature) =>
+            val path = uri.stripPrefix("file://")
+            featureLens(feature, path) :: feature.scenarios.map(scenarioLens(_, path))
+      }
+
+  // Emit an "N usages" lens above each step definition in a .scala file.
+  private def scalaLenses(uri: String, content: String, index: WorkspaceIndex): UIO[List[CodeLens]] =
+    val path = uri.stripPrefix("file://")
+    val defs = StepExtractor.extractFromSource(content, path)
+    ZIO
+      .foreachPar(defs) { defn =>
+        ReferencesHandler.usageCount(defn, index).map { count =>
+          val label   = if count == 1 then "1 usage" else s"$count usages"
+          val command = new Command(label, "zio-bdd.findStepUsages")
+          // Arguments forwarded to the extension command: file URI, line, character.
+          // The extension resolves them into a position and calls vscode.executeReferenceProvider.
+          command.setArguments(
+            List[Object](uri, java.lang.Integer.valueOf(defn.line), java.lang.Integer.valueOf(0)).asJava
+          )
+          new CodeLens(lineRange(defn.line), command, null)
+        }
+      }
+      .map(_.toList)
 
   private def featureLens(feature: Feature, path: String): CodeLens =
     val line    = toLsp(feature.line)
@@ -47,9 +68,6 @@ object CodeLensHandler:
     )
     new CodeLens(lineRange(line), command, null)
 
-  // The whole sbt argument is wrapped in double quotes (runCommand), so individual
-  // flag values must use single quotes — nesting double quotes inside double quotes
-  // breaks the shell's parsing of the outer argument.
   private def shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
   private def runCommand(flags: String): String =

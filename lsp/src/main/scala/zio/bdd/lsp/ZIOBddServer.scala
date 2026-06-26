@@ -53,6 +53,7 @@ final class ZIOBddServer(
     caps.setHoverProvider(true)
     caps.setDocumentSymbolProvider(true)
     caps.setCodeLensProvider(new CodeLensOptions(false))
+    caps.setReferencesProvider(true)
     caps.setCodeActionProvider(true)
     caps.setCompletionProvider(
       new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/").asJava)
@@ -136,9 +137,17 @@ final class ZIOBddServer(
         .map(items => JEither.forLeft[java.util.List[CompletionItem], CompletionList](items.asJava))
     )
 
+  override def references(params: ReferenceParams): CompletableFuture[java.util.List[? <: Location]] =
+    val uri = params.getTextDocument.getUri
+    dispatchGated(
+      ReferencesHandler
+        .references(uri, params.getPosition, currentContent(uri), index)
+        .map(_.asJava)
+    )
+
   override def codeLens(params: CodeLensParams): CompletableFuture[java.util.List[? <: CodeLens]] =
     val uri = params.getTextDocument.getUri
-    dispatchGated(CodeLensHandler.codeLenses(uri, currentContent(uri)).map(_.asJava))
+    dispatchGated(CodeLensHandler.codeLenses(uri, currentContent(uri), index).map(_.asJava))
 
   override def codeAction(
     params: CodeActionParams
