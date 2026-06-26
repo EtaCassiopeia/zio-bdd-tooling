@@ -88,18 +88,63 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // Handler for "N usages" code-lens buttons on Scala step definitions.
-  // Calls the LSP references provider at the step's position and shows
-  // results in the VS Code References panel.
+  // Calls our LSP directly (not vscode.executeReferenceProvider, which also
+  // invokes Metals and mixes in Scala-symbol references for .scala files).
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'zio-bdd.findStepUsages',
       async (uriStr: string, line: number, character: number) => {
-        const uri = vscode.Uri.parse(uriStr);
-        const pos = new vscode.Position(line, character);
-        const locs = await vscode.commands.executeCommand<vscode.Location[]>(
-          'vscode.executeReferenceProvider', uri, pos,
+        if (!client) return;
+
+        interface LspLoc {
+          uri: string;
+          range: { start: { line: number; character: number } };
+        }
+        const lspLocs = await client.sendRequest<LspLoc[] | null>('textDocument/references', {
+          textDocument: { uri: uriStr },
+          position: { line, character },
+          context: { includeDeclaration: false },
+        });
+
+        if (!lspLocs?.length) {
+          vscode.window.showInformationMessage('No usages found for this step definition');
+          return;
+        }
+
+        const open = async (loc: LspLoc) => {
+          await vscode.window.showTextDocument(vscode.Uri.parse(loc.uri), {
+            selection: new vscode.Range(
+              new vscode.Position(loc.range.start.line, 0),
+              new vscode.Position(loc.range.start.line, 0),
+            ),
+            preserveFocus: false,
+          });
+        };
+
+        if (lspLocs.length === 1) {
+          await open(lspLocs[0]);
+          return;
+        }
+
+        // Multiple usages: show in VS Code's references peek panel.
+        // Double-clicking a result in the peek panel navigates to the file.
+        // We pass our own locations (from the direct LSP call above) so Metals
+        // Scala-symbol references don't get mixed in.
+        const vsLocs = lspLocs.map(loc =>
+          new vscode.Location(
+            vscode.Uri.parse(loc.uri),
+            new vscode.Range(
+              new vscode.Position(loc.range.start.line, 0),
+              new vscode.Position(loc.range.start.line, 0),
+            )
+          )
         );
-        await vscode.commands.executeCommand('editor.action.showReferences', uri, pos, locs ?? []);
+        await vscode.commands.executeCommand(
+          'editor.action.showReferences',
+          vscode.Uri.parse(uriStr),
+          new vscode.Position(line, character),
+          vsLocs,
+        );
       }
     )
   );

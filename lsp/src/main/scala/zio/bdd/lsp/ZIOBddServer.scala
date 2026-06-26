@@ -175,10 +175,11 @@ final class ZIOBddServer(
 
   override def didChangeWatchedFiles(params: DidChangeWatchedFilesParams): Unit =
     params.getChanges.asScala.foreach { change =>
-      val path = change.getUri.stripPrefix("file://")
-      change.getType match
-        case FileChangeType.Deleted => fireAndForget(index.removeFile(path))
-        case _                      => reindex(change.getUri, readFile(path))
+      if !inBuildDir(change.getUri) then
+        val path = change.getUri.stripPrefix("file://")
+        change.getType match
+          case FileChangeType.Deleted => fireAndForget(index.removeFile(path))
+          case _                      => reindex(change.getUri, readFile(path))
     }
 
   // ── Internals ─────────────────────────────────────────────────────────────
@@ -242,7 +243,14 @@ final class ZIOBddServer(
   private def currentContent(uri: String): String =
     Option(contentCache.get(uri)).getOrElse("")
 
+  private val buildDirs = Set("target", ".bloop", ".metals", ".bsp", "out", ".cache", "node_modules")
+
+  private def inBuildDir(uri: String): Boolean =
+    val sep = java.io.File.separator
+    buildDirs.exists(d => uri.contains(sep + d + sep) || uri.contains("/" + d + "/"))
+
   private def reindex(uri: String, content: String): Unit =
+    if inBuildDir(uri) then return
     contentCache.put(uri, content)
     val path = uri.stripPrefix("file://")
     val effect =

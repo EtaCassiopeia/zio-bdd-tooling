@@ -167,7 +167,8 @@ body {
   align-items: center;
 }
 .icon-btn:hover { background: #21262d; color: #c9d1d9; }
-#filter-btn.active { color: #388bfd; }
+.icon-btn svg { display: block; }
+#filter-btn.active svg { color: #388bfd; }
 
 .run-all-btn {
   background: #1f6feb22;
@@ -436,7 +437,11 @@ body {
   <span class="logo">◈</span>
   <span class="header-title">Scenario Explorer</span>
   <button class="icon-btn" id="refresh-btn" title="Refresh">↻</button>
-  <button class="icon-btn" id="filter-btn" title="Filter by tag">⊝</button>
+  <button class="icon-btn" id="filter-btn" title="Filter by tag">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M2 3.5A.5.5 0 0 1 2.5 3h11a.5.5 0 0 1 .354.854L9.5 8.207V13.5a.5.5 0 0 1-.724.447l-3-1.5A.5.5 0 0 1 5.5 12V8.207L2.146 3.854A.5.5 0 0 1 2 3.5z"/>
+    </svg>
+  </button>
   <button class="run-all-btn" id="run-all-btn" title="Run all tests">▶ All</button>
 </div>
 
