@@ -33,7 +33,8 @@ final class ZIOBddServer(
   bspRef: Ref[Option[BspClient]]
 ) extends LanguageServer
     with TextDocumentService
-    with WorkspaceService:
+    with WorkspaceService
+    with ZioBddExtension:
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ final class ZIOBddServer(
     caps.setHoverProvider(true)
     caps.setDocumentSymbolProvider(true)
     caps.setCodeLensProvider(new CodeLensOptions(false))
+    caps.setReferencesProvider(true)
     caps.setCodeActionProvider(true)
     caps.setCompletionProvider(
       new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/").asJava)
@@ -136,9 +138,17 @@ final class ZIOBddServer(
         .map(items => JEither.forLeft[java.util.List[CompletionItem], CompletionList](items.asJava))
     )
 
+  override def references(params: ReferenceParams): CompletableFuture[java.util.List[? <: Location]] =
+    val uri = params.getTextDocument.getUri
+    dispatchGated(
+      ReferencesHandler
+        .references(uri, params.getPosition, currentContent(uri), index)
+        .map(_.asJava)
+    )
+
   override def codeLens(params: CodeLensParams): CompletableFuture[java.util.List[? <: CodeLens]] =
     val uri = params.getTextDocument.getUri
-    dispatchGated(CodeLensHandler.codeLenses(uri, currentContent(uri)).map(_.asJava))
+    dispatchGated(CodeLensHandler.codeLenses(uri, currentContent(uri), index).map(_.asJava))
 
   override def codeAction(
     params: CodeActionParams
@@ -166,10 +176,11 @@ final class ZIOBddServer(
 
   override def didChangeWatchedFiles(params: DidChangeWatchedFilesParams): Unit =
     params.getChanges.asScala.foreach { change =>
-      val path = change.getUri.stripPrefix("file://")
-      change.getType match
-        case FileChangeType.Deleted => fireAndForget(index.removeFile(path))
-        case _                      => reindex(change.getUri, readFile(path))
+      if !inBuildDir(change.getUri) then
+        val path = change.getUri.stripPrefix("file://")
+        change.getType match
+          case FileChangeType.Deleted => fireAndForget(index.removeFile(path))
+          case _                      => reindex(change.getUri, readFile(path))
     }
 
   // ── Internals ─────────────────────────────────────────────────────────────
@@ -233,7 +244,14 @@ final class ZIOBddServer(
   private def currentContent(uri: String): String =
     Option(contentCache.get(uri)).getOrElse("")
 
+  private val buildDirs = Set("target", ".bloop", ".metals", ".bsp", "out", ".cache", "node_modules")
+
+  private def inBuildDir(uri: String): Boolean =
+    val sep = java.io.File.separator
+    buildDirs.exists(d => uri.contains(sep + d + sep) || uri.contains("/" + d + "/"))
+
   private def reindex(uri: String, content: String): Unit =
+    if inBuildDir(uri) then return
     contentCache.put(uri, content)
     val path = uri.stripPrefix("file://")
     val effect =
@@ -312,6 +330,42 @@ final class ZIOBddServer(
    */
   private def dispatchGated[A](effect: UIO[A]): CompletableFuture[A] =
     dispatch(ready.await *> effect)
+
+  // ── ZioBddExtension ──────────────────────────────────────────────────────
+
+  override def suiteFeatureMap(params: com.google.gson.JsonObject): CompletableFuture[String] =
+    dispatchGated(
+      index.suiteFeatureMap().map { entries =>
+        val arr = new com.google.gson.JsonArray()
+        entries.foreach { (scalaFile, featurePaths) =>
+          val obj = new com.google.gson.JsonObject()
+          obj.addProperty("suiteName", java.nio.file.Paths.get(scalaFile).getFileName.toString.stripSuffix(".scala"))
+          obj.addProperty("scalaFile", scalaFile)
+          val featArr = new com.google.gson.JsonArray()
+          featurePaths.foreach(featArr.add)
+          obj.add("featurePaths", featArr)
+          arr.add(obj)
+        }
+        arr.toString
+      }
+    )
+
+  override def buildRunCommand(params: com.google.gson.JsonObject): CompletableFuture[String] =
+    val featureUri   = params.get("featureUri").getAsString
+    val scenarioName = Option(params.get("scenarioName")).filterNot(_.isJsonNull).map(_.getAsString)
+    val featurePath  = featureUri.stripPrefix("file://")
+    dispatchGated(
+      for
+        suiteFiles <- index.suiteFilesForFeature(featurePath)
+        selector    = handlers.CodeLensHandler.suiteSelector(suiteFiles)
+        flags = scenarioName match
+                  case Some(name) =>
+                    s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}" +
+                      s" --scenario-name ${handlers.CodeLensHandler.shellQuote(name)} --focused"
+                  case None =>
+                    s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}"
+      yield handlers.CodeLensHandler.buildRunCommand(selector, flags)
+    )
 
 object ZIOBddServer:
   val layer: ZLayer[WorkspaceIndex, Nothing, ZIOBddServer] =

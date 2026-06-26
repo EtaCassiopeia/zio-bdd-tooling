@@ -16,16 +16,39 @@
   "qna": "https://github.com/EtaCassiopeia/zio-bdd-tooling/discussions",
   "activationEvents": [
     "workspaceContains:**/*.feature",
-    "onLanguage:gherkin"
+    "onLanguage:gherkin",
+    "onView:zioBdd.scenarioExplorer"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zio-bdd",
+          "title": "zio-bdd",
+          "icon": "images/bdd-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "zio-bdd": [
+        {
+          "type": "webview",
+          "id": "zioBdd.scenarioExplorer",
+          "name": "Scenario Explorer"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "gherkin",
         "aliases": ["Gherkin", "Feature"],
         "extensions": [".feature"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/feature-icon.svg",
+          "dark": "./images/feature-icon.svg"
+        }
       }
     ],
     "grammars": [
@@ -47,8 +70,26 @@
       {
         "command": "zio-bdd.showOutput",
         "title": "zio-bdd: Show Output Channel"
+      },
+      {
+        "command": "zio-bdd.refreshSidebar",
+        "title": "zio-bdd: Refresh Scenario Explorer",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "zio-bdd.findStepUsages",
+        "title": "zio-bdd: Find Step Usages"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "zio-bdd.refreshSidebar",
+          "when": "view == zioBdd.scenarioExplorer",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "zio-bdd",
       "properties": {

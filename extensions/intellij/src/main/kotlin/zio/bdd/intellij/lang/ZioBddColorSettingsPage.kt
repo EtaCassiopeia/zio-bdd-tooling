@@ -12,14 +12,15 @@ class ZioBddColorSettingsPage : ColorSettingsPage {
 
     private val attrs = arrayOf(
         AttributesDescriptor("Structural keyword (Feature:, Scenario:, …)", ZioBddSyntaxHighlighter.KEYWORD),
+        AttributesDescriptor("Feature / scenario title text", ZioBddSyntaxHighlighter.TITLE_TEXT),
         AttributesDescriptor("Step keyword (Given, When, Then, And, But)", ZioBddSyntaxHighlighter.STEP_KEYWORD),
+        AttributesDescriptor("Step text (body after keyword)", ZioBddSyntaxHighlighter.STEP_TEXT),
+        AttributesDescriptor("Placeholder (<param>)", ZioBddSyntaxHighlighter.PLACEHOLDER),
         AttributesDescriptor("Tag (@smoke, @regression)", ZioBddSyntaxHighlighter.TAG),
         AttributesDescriptor("Flags tag (@flags(k=v))", ZioBddSyntaxHighlighter.FLAGS_TAG),
         AttributesDescriptor("Comment (# …)", ZioBddSyntaxHighlighter.COMMENT),
-        AttributesDescriptor("Placeholder (<param>)", ZioBddSyntaxHighlighter.PLACEHOLDER),
         AttributesDescriptor("Table cell separator (|)", ZioBddSyntaxHighlighter.TABLE_PIPE),
         AttributesDescriptor("Doc string (\"\"\" … \"\"\")", ZioBddSyntaxHighlighter.DOC_STRING),
-        AttributesDescriptor("Step text", ZioBddSyntaxHighlighter.STEP_TEXT),
     )
 
     override fun getAttributeDescriptors(): Array<AttributesDescriptor> = attrs

@@ -1,7 +1,7 @@
 package zio.bdd.lsp
 
 import zio.*
-import zio.bdd.gherkin.Feature
+import zio.bdd.gherkin.{Feature, StepType}
 
 import java.nio.file.{Files, Path, Paths}
 import scala.jdk.CollectionConverters.*
@@ -38,6 +38,45 @@ final class WorkspaceIndex private (
 
   def findStep(keyword: String, text: String): UIO[StepMatcher.MatchResult] =
     allSteps.map(StepMatcher.find(keyword, text, _))
+
+  def suiteFilesForFeature(featurePath: String): UIO[List[String]] =
+    for
+      featureMap <- featuresRef.get
+      stepMap    <- stepsRef.get
+    yield featureMap.get(featurePath).fold(List.empty[String]) { feature =>
+      stepMap.collect {
+        case (scalaFile, defs) if defs.nonEmpty && featureMatchesDefs(feature, defs) => scalaFile
+      }.toList
+    }
+
+  // Returns a mapping of Scala suite file → feature file paths for every suite
+  // that has at least one matching step definition.  Used by the sidebar to
+  // group features under the suite that owns them.
+  def suiteFeatureMap(): UIO[List[(String, List[String])]] =
+    for
+      featureMap <- featuresRef.get
+      stepMap    <- stepsRef.get
+    yield stepMap.toList.flatMap { (scalaFile, defs) =>
+      if defs.isEmpty then None
+      else
+        val matched = featureMap.keys.filter { featurePath =>
+          featureMap.get(featurePath).exists(featureMatchesDefs(_, defs))
+        }.toList.sorted
+        if matched.isEmpty then None else Some(scalaFile -> matched)
+    }
+
+  private def featureMatchesDefs(feature: Feature, defs: List[StepDefinition]): Boolean =
+    feature.scenarios.flatMap(_.steps).exists { step =>
+      val kw = step.stepType match
+        case StepType.GivenStep => "Given"
+        case StepType.WhenStep  => "When"
+        case StepType.ThenStep  => "Then"
+        case StepType.ButStep   => "But"
+        case StepType.AndStep   => "And"
+      StepMatcher.find(kw, step.pattern, defs) match
+        case StepMatcher.MatchResult.Matched(_) => true
+        case _                                  => false
+    }
 
   // Walk source roots and index every .scala / .feature file in parallel.
   //
@@ -109,6 +148,21 @@ final class WorkspaceIndex private (
       .collect { case s if s.startsWith("\"") => s.stripPrefix("\"").stripSuffix("\"") }
       .mkString
 
+  // Directory names that are never useful to scan: build output, VCS, IDE metadata,
+  // dependency caches, and tool-specific directories.
+  private val excludedDirs = Set(
+    "target",
+    ".git",
+    "node_modules",
+    ".bloop",
+    ".metals",
+    ".bsp",
+    ".idea",
+    ".scala-build",
+    "out",
+    ".cache"
+  )
+
   /** Returns (scalaPaths, featurePaths). Empty lists if root is missing. */
   private def collectFiles(root: Path): (List[String], List[String]) =
     if !Files.exists(root) then (Nil, Nil)
@@ -117,7 +171,11 @@ final class WorkspaceIndex private (
         .walk(root)
         .iterator()
         .asScala
-        .filter(Files.isRegularFile(_))
+        .filter { p =>
+          Files.isRegularFile(p) &&
+          // Reject any path whose components include an excluded directory name.
+          !p.iterator().asScala.exists(part => excludedDirs.contains(part.toString))
+        }
         .map(_.toAbsolutePath.toString)
         .toList
       (all.filter(_.endsWith(".scala")), all.filter(_.endsWith(".feature")))

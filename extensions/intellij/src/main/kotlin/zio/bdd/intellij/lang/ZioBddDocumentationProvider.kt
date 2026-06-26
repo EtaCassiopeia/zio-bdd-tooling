@@ -8,8 +8,7 @@ import zio.bdd.intellij.lang.psi.ZioBddStep
 
 class ZioBddDocumentationProvider : DocumentationProvider {
 
-    private val colPlaceholder = Regex("""\<(\w+)\>""")
-    private val typeParam      = Regex("""\{([^}]+)\}""")
+    private val typeParam = Regex("""\{([^}]+)\}""")
 
     override fun generateDoc(element: PsiElement, originalElement: PsiElement?): String? {
         val project = element.project
@@ -21,7 +20,8 @@ class ZioBddDocumentationProvider : DocumentationProvider {
         if (stepText.isBlank()) return null
 
         val defs = ZioBddStepCache.getInstance(project).getStepDefinitions()
-        val match = candidatesFor(keyword, defs).firstOrNull { matchesStep(stepText, it) }
+        val match = ZioBddStepMatcher.candidatesFor(keyword, defs)
+            .firstOrNull { ZioBddStepMatcher.matchesStep(stepText, it) }
             ?: return null
 
         return buildDoc(match)
@@ -63,23 +63,4 @@ class ZioBddDocumentationProvider : DocumentationProvider {
         return null
     }
 
-    private fun matchesStep(text: String, def: KtStepDefinition): Boolean =
-        if (colPlaceholder.containsMatchIn(text)) structuralMatch(text, def)
-        else try { Regex(def.pattern).matches(text) } catch (_: Exception) { false }
-
-    private fun structuralMatch(template: String, def: KtStepDefinition): Boolean {
-        val lits = mutableListOf<String>(); var pos = 0; var count = 0
-        colPlaceholder.findAll(template).forEach { m ->
-            if (m.range.first > pos) lits += template.substring(pos, m.range.first)
-            count++; pos = m.range.last + 1
-        }
-        if (pos < template.length) lits += template.substring(pos)
-        return lits == def.literals && count == def.extractorCount
-    }
-
-    private fun candidatesFor(keyword: String, defs: List<KtStepDefinition>): List<KtStepDefinition> =
-        when (keyword) {
-            "And", "But" -> defs
-            else -> defs.filter { it.keyword == keyword || it.keyword == "And" || it.keyword == "But" }
-        }
 }

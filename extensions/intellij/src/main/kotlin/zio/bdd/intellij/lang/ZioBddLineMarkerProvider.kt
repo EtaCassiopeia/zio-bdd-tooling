@@ -6,23 +6,54 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.psi.PsiElement
 import zio.bdd.intellij.execution.ZioBddRunConfigurationProducer
+import zio.bdd.intellij.lang.psi.ZioBddFeatureHeader
 import zio.bdd.intellij.lang.psi.ZioBddScenarioHeader
 
 class ZioBddLineMarkerProvider : LineMarkerProvider {
+
+    // IntelliJ requires markers to be anchored to leaf elements (no children).
+    // We attach to the first child (KEYWORD token) of each header composite node.
     override fun getLineMarkerInfo(element: PsiElement): LineMarkerInfo<*>? {
-        if (element !is ZioBddScenarioHeader) return null
-        if (element.isBackground()) return null
-        return createMarker(element)
+        if (element.firstChild != null) return null       // not a leaf
+        val parent = element.parent ?: return null
+        if (element != parent.firstChild) return null     // only the first token per header
+        return when {
+            parent is ZioBddFeatureHeader                              -> createFeatureMarker(parent, element)
+            parent is ZioBddScenarioHeader && !parent.isBackground()  -> createScenarioMarker(parent, element)
+            else                                                       -> null
+        }
     }
 
-    private fun createMarker(scenario: ZioBddScenarioHeader): LineMarkerInfo<ZioBddScenarioHeader> {
+    private fun createFeatureMarker(feature: ZioBddFeatureHeader, anchor: PsiElement): LineMarkerInfo<PsiElement> {
+        val name = feature.getFeatureName()
+        return LineMarkerInfo(
+            anchor,
+            anchor.textRange,
+            AllIcons.Actions.Execute,
+            { "Run feature: $name" },
+            { _, leaf ->
+                val hdr = leaf.parent as? ZioBddFeatureHeader ?: return@LineMarkerInfo
+                if (hdr.isValid) {
+                    val vf = hdr.containingFile?.virtualFile ?: return@LineMarkerInfo
+                    ZioBddRunConfigurationProducer().runFeature(hdr.project, vf, name)
+                }
+            },
+            GutterIconRenderer.Alignment.LEFT,
+            { "Run feature: $name" },
+        )
+    }
+
+    private fun createScenarioMarker(scenario: ZioBddScenarioHeader, anchor: PsiElement): LineMarkerInfo<PsiElement> {
         val name = scenario.getScenarioName()
         return LineMarkerInfo(
-            scenario,
-            scenario.textRange,
+            anchor,
+            anchor.textRange,
             AllIcons.Actions.Execute,
             { "Run scenario: $name" },
-            { _, el -> if (el.isValid) ZioBddRunConfigurationProducer().runScenario(el.project, el) },
+            { _, leaf ->
+                val hdr = leaf.parent as? ZioBddScenarioHeader ?: return@LineMarkerInfo
+                if (hdr.isValid) ZioBddRunConfigurationProducer().runScenario(hdr.project, hdr)
+            },
             GutterIconRenderer.Alignment.LEFT,
             { "Run scenario: $name" },
         )

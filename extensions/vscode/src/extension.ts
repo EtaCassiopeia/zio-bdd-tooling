@@ -10,6 +10,7 @@ import {
 } from 'vscode-languageclient/node';
 import { registerCommands } from './commands';
 import { registerTestController } from './testController';
+import { ScenarioExplorerProvider } from './sidebarProvider';
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.OutputChannel;
@@ -50,7 +51,11 @@ export function activate(context: vscode.ExtensionContext): void {
     documentSelector: [
       { scheme: 'file', language: 'gherkin' },
       { scheme: 'file', pattern: '**/*.feature' },
+      // 'language: scala' only matches when Metals is installed and has registered the
+      // scala language ID. The pattern fallback ensures the LSP attaches to .scala files
+      // even in vanilla VS Code without any Scala extension.
       { scheme: 'file', language: 'scala' },
+      { scheme: 'file', pattern: '**/*.scala' },
     ],
     outputChannel,
     synchronize: {
@@ -68,6 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
   client.start().then(() => {
     statusBarItem.text = '$(check) zio-bdd: ready';
     outputChannel.appendLine('zio-bdd LSP server started.');
+    sidebar.setLspClient(client!);  // client is defined here; start() resolves after successful connection
   }).catch((err: Error) => {
     statusBarItem.text = '$(error) zio-bdd: error';
     outputChannel.appendLine(`zio-bdd LSP failed to start: ${err.message}`);
@@ -82,8 +88,127 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  // Handler for "N usages" code-lens buttons on Scala step definitions.
+  // Calls our LSP directly (not vscode.executeReferenceProvider, which also
+  // invokes Metals and mixes in Scala-symbol references for .scala files).
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'zio-bdd.findStepUsages',
+      async (uriStr: string, line: number, character: number) => {
+        if (!client) return;
+
+        interface LspLoc {
+          uri: string;
+          range: { start: { line: number; character: number } };
+        }
+        const lspLocs = await client.sendRequest<LspLoc[] | null>('textDocument/references', {
+          textDocument: { uri: uriStr },
+          position: { line, character },
+          context: { includeDeclaration: false },
+        });
+
+        if (!lspLocs?.length) {
+          vscode.window.showInformationMessage('No usages found for this step definition');
+          return;
+        }
+
+        const open = async (loc: LspLoc) => {
+          await vscode.window.showTextDocument(vscode.Uri.parse(loc.uri), {
+            selection: new vscode.Range(
+              new vscode.Position(loc.range.start.line, 0),
+              new vscode.Position(loc.range.start.line, 0),
+            ),
+            preserveFocus: false,
+          });
+        };
+
+        if (lspLocs.length === 1) {
+          await open(lspLocs[0]);
+          return;
+        }
+
+        // Multiple usages — two ways to navigate:
+        //
+        // 1. QuickPick: hover/arrow key previews the file (preview tab, focus stays
+        //    in QuickPick); clicking an item or pressing Enter opens it permanently.
+        //    This is the "double-click" feel: first interaction previews, second confirms.
+        //
+        // 2. Peek panel: the QuickPick also passes locations to
+        //    editor.action.showReferences so the inline peek stays open behind it.
+        //    Double-clicking any entry in the peek navigates directly.
+        const vsLocs = lspLocs.map(loc =>
+          new vscode.Location(
+            vscode.Uri.parse(loc.uri),
+            new vscode.Range(
+              new vscode.Position(loc.range.start.line, 0),
+              new vscode.Position(loc.range.start.line, 1000), // highlight line in peek preview
+            )
+          )
+        );
+
+        // Show peek panel first so it's visible behind the QuickPick
+        void vscode.commands.executeCommand(
+          'editor.action.showReferences',
+          vscode.Uri.parse(uriStr),
+          new vscode.Position(line, character),
+          vsLocs,
+        );
+
+        type Item = vscode.QuickPickItem & { loc: LspLoc };
+        const items: Item[] = lspLocs.map(loc => ({
+          label:              `$(file) ${path.basename(loc.uri.replace(/^file:\/\//, ''))}`,
+          description:        path.dirname(loc.uri.replace(/^file:\/\//, '')),
+          detail:             `Line ${loc.range.start.line + 1}`,
+          loc,
+        }));
+
+        const qp = vscode.window.createQuickPick<Item>();
+        qp.items              = items;
+        qp.placeholder        = `${lspLocs.length} usages — hover to preview · Enter or click to open`;
+        qp.matchOnDescription = true;
+        qp.matchOnDetail      = true;
+
+        qp.onDidChangeActive(active => {
+          if (!active[0]) return;
+          vscode.window.showTextDocument(vscode.Uri.parse(active[0].loc.uri), {
+            selection: new vscode.Range(
+              new vscode.Position(active[0].loc.range.start.line, 0),
+              new vscode.Position(active[0].loc.range.start.line, 0),
+            ),
+            preview:       true,  // italic tab title — discarded on next open
+            preserveFocus: true,  // keep focus in QuickPick
+          });
+        });
+
+        qp.onDidAccept(async () => {
+          const [chosen] = qp.activeItems;
+          qp.hide();
+          if (chosen) await open(chosen.loc);
+        });
+
+        qp.show();
+      }
+    )
+  );
+
   registerCommands(context, client, outputChannel, statusBarItem);
   registerTestController(context, client);
+
+  // Scenario Explorer sidebar
+  const sidebar = new ScenarioExplorerProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ScenarioExplorerProvider.viewId, sidebar),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('zio-bdd.refreshSidebar', () => sidebar.refresh()),
+  );
+  const featureWatcher = vscode.workspace.createFileSystemWatcher('**/*.feature');
+  const notInBuildDir = (uri: vscode.Uri) =>
+    !/[/\\](target|node_modules|\.bloop|\.metals|\.bsp|out)[/\\]/.test(uri.fsPath);
+  featureWatcher.onDidCreate(uri => { if (notInBuildDir(uri)) sidebar.refresh(); });
+  featureWatcher.onDidChange(uri => { if (notInBuildDir(uri)) sidebar.refresh(); });
+  featureWatcher.onDidDelete(uri => { if (notInBuildDir(uri)) sidebar.refresh(); });
+  context.subscriptions.push(featureWatcher);
 
   context.subscriptions.push({ dispose: () => client?.stop() });
 }

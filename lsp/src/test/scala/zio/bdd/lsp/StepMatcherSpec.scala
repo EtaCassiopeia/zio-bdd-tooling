@@ -60,6 +60,51 @@ object StepMatcherSpec extends ZIOSpecDefault:
       val result = StepMatcher.find("And", "the user's age is <age>", List(defn))
       assertTrue(result.isInstanceOf[StepMatcher.MatchResult.Matched])
     },
+    test("prefix-sharing definitions are distinguished by anchored patterns") {
+      // When("I subtract " / int / " from " / int) and When("I subtract " / int) share
+      // a common prefix. The patterns are anchored (^ ... $) so each only matches its
+      // own step text — neither produces a false positive on the other's text.
+      val subtract2 = StepDefinition(
+        keyword = "When",
+        literals = List("I subtract ", " from "),
+        extractors = List(
+          ExtractorInfo("int", "Int", """(-?\d+)""", "integer"),
+          ExtractorInfo("int", "Int", """(-?\d+)""", "integer")
+        ),
+        displayText = "I subtract {int} from {int}",
+        pattern = """^I subtract (-?\d+) from (-?\d+)$""",
+        file = "Steps.scala",
+        line = 1,
+        isStateInjecting = false
+      )
+      val subtract1 = StepDefinition(
+        keyword = "When",
+        literals = List("I subtract "),
+        extractors = List(ExtractorInfo("int", "Int", """(-?\d+)""", "integer")),
+        displayText = "I subtract {int}",
+        pattern = """^I subtract (-?\d+)$""",
+        file = "Steps.scala",
+        line = 2,
+        isStateInjecting = false
+      )
+      val both = List(subtract2, subtract1)
+      // Concrete step text
+      assertTrue(
+        StepMatcher.find("When", "I subtract 4 from 10", both) match
+          case StepMatcher.MatchResult.Matched(d) => d.literals == List("I subtract ", " from ")
+          case _                                  => false,
+        StepMatcher.find("When", "I subtract 4", both) match
+          case StepMatcher.MatchResult.Matched(d) => d.literals == List("I subtract ")
+          case _                                  => false,
+        // Placeholder step text (Scenario Outline columns)
+        StepMatcher.find("When", "I subtract <b> from <a>", both) match
+          case StepMatcher.MatchResult.Matched(d) => d.literals == List("I subtract ", " from ")
+          case _                                  => false,
+        StepMatcher.find("When", "I subtract <b>", both) match
+          case StepMatcher.MatchResult.Matched(d) => d.literals == List("I subtract ")
+          case _                                  => false
+      )
+    },
     test("mismatched placeholder count does not structurally match") {
       val defn = StepDefinition(
         keyword = "Given",

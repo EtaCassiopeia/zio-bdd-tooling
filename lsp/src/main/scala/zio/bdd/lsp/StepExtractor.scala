@@ -21,9 +21,11 @@ import scala.util.matching.Regex
  */
 object StepExtractor:
 
-  // Matches: Given("...", When("...", GivenS("... at the start of a step registration
+  // Matches: Given("...", When("...", GivenS("... at the start of a step registration.
+  // Uses [ \t]* (not \s*) so the match never spans a blank line — \s includes \n which would
+  // cause m.start to point at the preceding blank line, making line-number computation off by 1.
   private val stepCallRe: Regex =
-    """(?m)^\s*(Given|When|Then|And|But|GivenS|WhenS|ThenS|AndS|ButS)\s*\(""".r
+    """(?m)^[ \t]*(Given|When|Then|And|But|GivenS|WhenS|ThenS|AndS|ButS)[ \t]*\(""".r
 
   def extractFromSource(content: String, filePath: String): List[StepDefinition] =
     stepCallRe
@@ -177,9 +179,12 @@ object StepExtractor:
   // Literal escaping mirrors `zio.bdd.core.step.StepExpression.toPattern`'s
   // `Pattern.quote` step exactly, so this can't drift from how core builds the
   // same regex for a real StepExpression.
+  // Extractors with empty pattern (table[T], docString) capture data that lives on
+  // separate lines below the step, not inline in the step text — they contribute
+  // nothing to the inline regex, so we use "" rather than "(.+)".
   private def buildPattern(literals: List[String], extractors: List[ExtractorInfo]): String =
     val escapedLits = literals.map(java.util.regex.Pattern.quote)
-    val patterns    = extractors.map(e => if e.pattern.nonEmpty then e.pattern else "(.+)")
+    val patterns    = extractors.map(_.pattern)
     "^" + mergeAlternating(escapedLits, patterns).mkString + "$"
 
   private def mergeAlternating(as: List[String], bs: List[String]): List[String] =

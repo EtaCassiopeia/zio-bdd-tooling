@@ -42,6 +42,11 @@
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddParserDefinition"/>
 
+        <!-- ── Sub-line syntax highlighting (keyword vs title vs step text) ── -->
+        <annotator
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddSyntaxAnnotator"/>
+
         <!-- ── Step validation ────────────────────────────────────────────── -->
         <annotator
                 language="ZioBddGherkin"
@@ -57,10 +62,15 @@
                 implementationClass="zio.bdd.intellij.lang.ZioBddCompletionContributor"
                 order="first"/>
 
-        <!-- ── Run gutter icons ───────────────────────────────────────────── -->
+        <!-- ── Run gutter icons (feature files) ─────────────────────────── -->
         <codeInsight.lineMarkerProvider
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddLineMarkerProvider"/>
+
+        <!-- ── Find-usages eye icon on Scala step definitions ──────────── -->
+        <codeInsight.lineMarkerProvider
+                language="Scala"
+                implementationClass="zio.bdd.intellij.lang.ZioBddStepDefLineMarkerProvider"/>
 
         <!-- ── Run configurations ─────────────────────────────────────────── -->
         <configurationType
@@ -82,6 +92,22 @@
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddDocumentationProvider"/>
 
+        <!-- ── Scenario Explorer tool window ─────────────────────────────── -->
+        <toolWindow id="Scenario Explorer"
+                    anchor="left"
+                    factoryClass="zio.bdd.intellij.toolwindow.ZioBddScenarioExplorerFactory"
+                    icon="/icons/feature.svg"/>
+
     </extensions>
+
+    <actions>
+        <action id="zio.bdd.FindStepUsages"
+                class="zio.bdd.intellij.lang.ZioBddFindStepUsagesAction"
+                text="Find Step Usages"
+                description="Find all feature file steps that share this step definition">
+            <add-to-group group-id="EditorPopupMenu" anchor="after" relative-to-action="GotoDeclaration"/>
+        </action>
+    </actions>
+
 
 </idea-plugin>
