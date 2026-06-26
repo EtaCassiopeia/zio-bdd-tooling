@@ -25,13 +25,14 @@ object CodeLensHandler:
   def codeLenses(uri: String, content: String, index: WorkspaceIndex): UIO[List[CodeLens]] =
     if uri.endsWith(".scala") then scalaLenses(uri, content, index)
     else
-      ZIO.succeed {
-        GherkinBridge.parseFeature(content, uri) match
-          case Left(_) => Nil
-          case Right(feature) =>
-            val path = uri.stripPrefix("file://")
-            featureLens(feature, path) :: feature.scenarios.map(scenarioLens(_, path))
-      }
+      GherkinBridge.parseFeature(content, uri) match
+        case Left(_) => ZIO.succeed(Nil)
+        case Right(feature) =>
+          val path = uri.stripPrefix("file://")
+          index.suiteFilesForFeature(path).map { suiteFiles =>
+            val selector = suiteSelector(suiteFiles)
+            featureLens(feature, path, selector) :: feature.scenarios.map(scenarioLens(_, path, selector))
+          }
 
   // Emit an "N usages" lens above each step definition in a .scala file.
   private def scalaLenses(uri: String, content: String, index: WorkspaceIndex): UIO[List[CodeLens]] =
@@ -52,26 +53,42 @@ object CodeLensHandler:
       }
       .map(_.toList)
 
-  private def featureLens(feature: Feature, path: String): CodeLens =
+  private def featureLens(feature: Feature, path: String, selector: String): CodeLens =
     val line    = toLsp(feature.line)
     val command = new Command("▶ Run feature", "zio-bdd.runCommand")
-    command.setArguments(List[Object](runCommand(s"--feature-file ${shellQuote(path)}")).asJava)
+    command.setArguments(List[Object](buildRunCommand(selector, s"--feature-file ${shellQuote(path)}")).asJava)
     new CodeLens(lineRange(line), command, null)
 
-  private def scenarioLens(scenario: Scenario, path: String): CodeLens =
+  private def scenarioLens(scenario: Scenario, path: String, selector: String): CodeLens =
     val line    = toLsp(scenario.line)
     val command = new Command("▶ Run scenario", "zio-bdd.runCommand")
     command.setArguments(
       List[Object](
-        runCommand(s"--feature-file ${shellQuote(path)} --scenario-name ${shellQuote(scenario.name)}")
+        buildRunCommand(
+          selector,
+          s"--feature-file ${shellQuote(path)} --scenario-name ${shellQuote(scenario.name)} --focused"
+        )
       ).asJava
     )
     new CodeLens(lineRange(line), command, null)
 
-  private def shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
+  // Derives an sbt test selector from matched Scala file paths.
+  // e.g. List("/…/CalculatorSuite.scala") → "*CalculatorSuite*"
+  // Falls back to "*" (all suites) when the index has no match yet.
+  private[lsp] def suiteSelector(files: List[String]): String =
+    if files.isEmpty then "*"
+    else
+      files
+        .map(f => "*" + java.nio.file.Paths.get(f).getFileName.toString.stripSuffix(".scala") + "*")
+        .mkString(" ")
 
-  private def runCommand(flags: String): String =
-    s"""sbt "testOnly * -- $flags""""
+  // Wraps value in \" ... \" so sbt's QuotedString parser strips the outer quotes and
+  // preserves internal spaces. Single-quoted bash strings are NOT parsed by sbt — it
+  // passes the quotes through as literal characters, causing paths like '/file' to fail.
+  private[lsp] def shellQuote(value: String): String = "\\\"" + value + "\\\""
+
+  private[lsp] def buildRunCommand(selector: String, flags: String): String =
+    s"""sbt "testOnly $selector -- $flags""""
 
   private def lineRange(line: Int): Range = new Range(new Position(line, 0), new Position(line, 0))
 

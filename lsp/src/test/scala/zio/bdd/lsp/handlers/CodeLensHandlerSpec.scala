@@ -13,7 +13,7 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
       |""".stripMargin
 
   def spec = suite("CodeLensHandler")(
-    test("feature and scenario lenses run a single-quoted, shell-safe sbt command") {
+    test("feature and scenario lenses run a shell-safe sbt command targeting the matched suite") {
       for
         index  <- ZIO.service[WorkspaceIndex]
         lenses <- CodeLensHandler.codeLenses("file:///tmp/greeting.feature", feature, index)
@@ -21,18 +21,19 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
         val commands = lenses.map(_.getCommand.getArguments.get(0).toString)
         assertTrue(
           lenses.length == 2,
-          // The whole sbt argument is double-quoted; flag values must be single-quoted,
-          // not double-quoted, or the shell would terminate the outer argument early
-          // (a regression found by manually exercising the LSP against example/'s
-          // simple.feature, where a scenario name produced an invalid shell command).
-          commands.forall(c => !c.contains("--feature-file \"")),
-          commands(0) == """sbt "testOnly * -- --feature-file '/tmp/greeting.feature'"""",
+          // Values are wrapped in \" ... \" so sbt's QuotedString parser strips the outer
+          // quotes and preserves internal spaces.  Single-quoted values are NOT stripped by
+          // sbt — they arrive at the framework with literal ' characters.
+          commands.forall(c => !c.contains("--feature-file '/tmp")),
+          // With an empty index the selector falls back to * (all suites).
+          commands(0) == "sbt \"testOnly * -- --feature-file \\\"/tmp/greeting.feature\\\"\"",
+          // Scenario runs include --focused so only the targeted scenario appears in the report.
           commands(1) ==
-            """sbt "testOnly * -- --feature-file '/tmp/greeting.feature' --scenario-name 'Greet a user'""""
+            "sbt \"testOnly * -- --feature-file \\\"/tmp/greeting.feature\\\" --scenario-name \\\"Greet a user\\\" --focused\""
         )
       }
     },
-    test("scenario names containing a single quote are escaped, not left to break the command") {
+    test("single quotes in scenario names pass through unescaped (bash double-quoted context)") {
       val withQuote =
         """Feature: Greeting
           |  Scenario: Greet O'Brien
@@ -44,8 +45,10 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
       yield {
         val scenarioCommand = lenses(1).getCommand.getArguments.get(0).toString
         assertTrue(
+          // Single quotes need no escaping inside a bash double-quoted string — they are literal.
+          // sbt's QuotedString parser reads "Greet O'Brien" (with outer quotes stripped) → Greet O'Brien.
           scenarioCommand ==
-            "sbt \"testOnly * -- --feature-file '/tmp/greeting.feature' --scenario-name 'Greet O'\"'\"'Brien'\""
+            "sbt \"testOnly * -- --feature-file \\\"/tmp/greeting.feature\\\" --scenario-name \\\"Greet O'Brien\\\" --focused\""
         )
       }
     }

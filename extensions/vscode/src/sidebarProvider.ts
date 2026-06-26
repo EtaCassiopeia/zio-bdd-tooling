@@ -17,12 +17,22 @@ export interface FeatureItem {
   scenarios: ScenarioItem[];
 }
 
+interface LspClient {
+  sendRequest<T>(method: string, params: unknown): Promise<T>;
+}
+
 export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'zioBdd.scenarioExplorer';
   private _view?: vscode.WebviewView;
   private _features: FeatureItem[] = [];
+  private _lspClient?: LspClient;
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
+
+  /** Inject the LSP client once it has started. */
+  public setLspClient(client: LspClient): void {
+    this._lspClient = client;
+  }
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -48,21 +58,20 @@ export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'runScenario': {
-          const conf = vscode.workspace.getConfiguration('zio-bdd');
-          const sbt  = conf.get<string>('sbtCommand') ?? 'sbt';
-          const name = msg.scenarioName as string;
+          const featureUri   = msg.featureUri as string;
+          const scenarioName = msg.scenarioName as string;
+          const sbtCmd = await this._resolveSbtCommand(featureUri, scenarioName);
           const term = vscode.window.createTerminal('zio-bdd');
           term.show();
-          term.sendText(`${sbt} "testOnly * -- --scenario-name '${name.replace(/'/g, "'\\''")}' --focused"`);
+          term.sendText(sbtCmd);
           break;
         }
         case 'runFeature': {
-          const conf = vscode.workspace.getConfiguration('zio-bdd');
-          const sbt  = conf.get<string>('sbtCommand') ?? 'sbt';
-          const fsPath = msg.fsPath as string;
+          const featureUri = msg.featureUri as string;
+          const sbtCmd = await this._resolveSbtCommand(featureUri, null);
           const term = vscode.window.createTerminal('zio-bdd');
           term.show();
-          term.sendText(`${sbt} "testOnly * -- --feature-file '${fsPath.replace(/'/g, "'\\''")}' --focused"`);
+          term.sendText(sbtCmd);
           break;
         }
         case 'runAll': {
@@ -90,6 +99,27 @@ export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
 
   private _post(msg: object): void {
     this._view?.webview.postMessage(msg);
+  }
+
+  /** Ask the LSP for a targeted sbt run command; fall back to testOnly * if unavailable. */
+  private async _resolveSbtCommand(featureUri: string, scenarioName: string | null): Promise<string> {
+    if (this._lspClient) {
+      try {
+        return await this._lspClient.sendRequest<string>('zio-bdd/buildRunCommand', {
+          featureUri,
+          scenarioName,
+        });
+      } catch { /* LSP unavailable — use fallback below */ }
+    }
+    // Fallback: sbt with no suite filtering and double-quoted args
+    const conf    = vscode.workspace.getConfiguration('zio-bdd');
+    const sbt     = conf.get<string>('sbtCommand') ?? 'sbt';
+    const fsPath  = vscode.Uri.parse(featureUri).fsPath;
+    const dq      = (s: string) => `\\"${s.replace(/"/g, '\\"')}\\"`;
+    const flags   = scenarioName
+      ? `--feature-file ${dq(fsPath)} --scenario-name ${dq(scenarioName)} --focused`
+      : `--feature-file ${dq(fsPath)}`;
+    return `${sbt} "testOnly * -- ${flags}"`;
   }
 
   private async _scan(): Promise<FeatureItem[]> {
@@ -548,7 +578,8 @@ featRoot.addEventListener('click', e => {
   const featRun = e.target.closest('[data-feat-run]');
   if (featRun) {
     e.stopPropagation();
-    vscode.postMessage({ type: 'runFeature', fsPath: featRun.dataset.featRun });
+    const hdr = featRun.closest('[data-feat-uri]');
+    vscode.postMessage({ type: 'runFeature', featureUri: hdr?.dataset.featUri ?? '', fsPath: featRun.dataset.featRun });
     return;
   }
 
@@ -556,7 +587,7 @@ featRoot.addEventListener('click', e => {
   const scRun = e.target.closest('[data-sc-run]');
   if (scRun) {
     e.stopPropagation();
-    vscode.postMessage({ type: 'runScenario', scenarioName: scRun.dataset.scRun });
+    vscode.postMessage({ type: 'runScenario', scenarioName: scRun.dataset.scRun, featureUri: scRun.dataset.featUri ?? '' });
     return;
   }
 
@@ -760,7 +791,7 @@ function renderScenario(s, featureUri) {
         '<div class="' + nameCls + '">' + esc(s.name) + outline + '</div>' +
         (tags ? '<div class="tag-row">' + tags + '</div>' : '') +
       '</div>' +
-      (ignored ? '' : '<button class="sc-run" data-sc-run="' + esc(s.name) + '" title="Run scenario">▶</button>') +
+      (ignored ? '' : '<button class="sc-run" data-sc-run="' + esc(s.name) + '" data-feat-uri="' + esc(featureUri) + '" title="Run scenario">▶</button>') +
     '</div>'
   );
 }

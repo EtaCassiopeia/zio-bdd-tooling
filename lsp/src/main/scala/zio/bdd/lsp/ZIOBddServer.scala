@@ -33,7 +33,8 @@ final class ZIOBddServer(
   bspRef: Ref[Option[BspClient]]
 ) extends LanguageServer
     with TextDocumentService
-    with WorkspaceService:
+    with WorkspaceService
+    with ZioBddExtension:
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -329,6 +330,25 @@ final class ZIOBddServer(
    */
   private def dispatchGated[A](effect: UIO[A]): CompletableFuture[A] =
     dispatch(ready.await *> effect)
+
+  // ── ZioBddExtension ──────────────────────────────────────────────────────
+
+  override def buildRunCommand(params: com.google.gson.JsonObject): CompletableFuture[String] =
+    val featureUri   = params.get("featureUri").getAsString
+    val scenarioName = Option(params.get("scenarioName")).filterNot(_.isJsonNull).map(_.getAsString)
+    val featurePath  = featureUri.stripPrefix("file://")
+    dispatchGated(
+      for
+        suiteFiles <- index.suiteFilesForFeature(featurePath)
+        selector    = handlers.CodeLensHandler.suiteSelector(suiteFiles)
+        flags       = scenarioName match
+                        case Some(name) =>
+                          s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}" +
+                          s" --scenario-name ${handlers.CodeLensHandler.shellQuote(name)} --focused"
+                        case None =>
+                          s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}"
+      yield handlers.CodeLensHandler.buildRunCommand(selector, flags)
+    )
 
 object ZIOBddServer:
   val layer: ZLayer[WorkspaceIndex, Nothing, ZIOBddServer] =

@@ -1,7 +1,7 @@
 package zio.bdd.lsp
 
 import zio.*
-import zio.bdd.gherkin.Feature
+import zio.bdd.gherkin.{Feature, StepType}
 
 import java.nio.file.{Files, Path, Paths}
 import scala.jdk.CollectionConverters.*
@@ -38,6 +38,38 @@ final class WorkspaceIndex private (
 
   def findStep(keyword: String, text: String): UIO[StepMatcher.MatchResult] =
     allSteps.map(StepMatcher.find(keyword, text, _))
+
+  // Returns the Scala source file paths whose step definitions match at least
+  // one step in the given feature file.  Used to narrow the sbt test selector
+  // (e.g. `testOnly *CalculatorSuite*`) so "Run feature / Run scenario" only
+  // executes the relevant suite and suppresses noise from unrelated suites.
+  def suiteFilesForFeature(featurePath: String): UIO[List[String]] =
+    for
+      featureMap <- featuresRef.get
+      stepMap    <- stepsRef.get
+    yield featureMap.get(featurePath).fold(List.empty[String]) { feature =>
+      val featureSteps = feature.scenarios.flatMap(_.steps).map { step =>
+        val kw = step.stepType match
+          case StepType.GivenStep => "Given"
+          case StepType.WhenStep  => "When"
+          case StepType.ThenStep  => "Then"
+          case StepType.ButStep   => "But"
+          case StepType.AndStep   => "And"
+        (kw, step.pattern)
+      }
+      if featureSteps.isEmpty then Nil
+      else
+        stepMap.collect {
+          case (scalaFile, defs) if
+            defs.nonEmpty &&
+            featureSteps.exists { (kw, text) =>
+              StepMatcher.find(kw, text, defs) match
+                case StepMatcher.MatchResult.Matched(_) => true
+                case _                                  => false
+            }
+          => scalaFile
+        }.toList
+    }
 
   // Walk source roots and index every .scala / .feature file in parallel.
   //

@@ -73,6 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
   client.start().then(() => {
     statusBarItem.text = '$(check) zio-bdd: ready';
     outputChannel.appendLine('zio-bdd LSP server started.');
+    sidebar.setLspClient(client!);  // client is defined here; start() resolves after successful connection
   }).catch((err: Error) => {
     statusBarItem.text = '$(error) zio-bdd: error';
     outputChannel.appendLine(`zio-bdd LSP failed to start: ${err.message}`);

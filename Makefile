@@ -50,6 +50,16 @@ native:
 test:
 	sbt lsp/test cli/test
 
+## Publish zio-bdd locally and pin .sbtopts to the new SNAPSHOT version.
+## Run this whenever zio-bdd changes: make sync-zio-bdd ZIO_BDD_DIR=../zio-bdd
+sync-zio-bdd:
+	@ZIO_BDD_DIR=$${ZIO_BDD_DIR:-../zio-bdd}; \
+	echo "==> Publishing zio-bdd from $$ZIO_BDD_DIR ..."; \
+	cd "$$ZIO_BDD_DIR" && sbt publishLocal 2>&1 | tee /tmp/zio-bdd-publish.log; \
+	VERSION=$$(ls ~/.ivy2/local/io.github.etacassiopeia/zio-bdd_3/ | grep SNAPSHOT | sort | tail -1); \
+	echo "==> Pinning .sbtopts to $$VERSION"; \
+	echo "-DzioBdd.version=$$VERSION" > "$(CURDIR)/.sbtopts"
+
 ## Remove all build artifacts
 clean:
 	sbt clean
