@@ -67,10 +67,9 @@
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddLineMarkerProvider"/>
 
-        <!-- ── Find-usages gutter on Scala step definitions ─────────────── -->
-        <codeInsight.lineMarkerProvider
-                language="Scala"
-                implementationClass="zio.bdd.intellij.lang.ZioBddStepDefLineMarkerProvider"/>
+        <!-- ── "N usages" Code Vision above Scala step definitions ─────── -->
+        <codeInsight.codeVision.provider
+                implementation="zio.bdd.intellij.lang.ZioBddStepCodeVisionProvider"/>
 
         <!-- ── Run configurations ─────────────────────────────────────────── -->
         <configurationType
