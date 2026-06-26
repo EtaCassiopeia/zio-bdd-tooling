@@ -17,9 +17,6 @@ data class KtStepDefinition(
  */
 object KtStepExtractor {
 
-    // Use [ \t]* (not \s*) so we never match across line boundaries:
-    // \s* would let ^ anchor on a blank line, then consume the newline + indent
-    // of the next line, landing the line-count 1-2 lines too early.
     private val STEP_CALL = Regex(
         """(?m)^[ \t]*(Given|When|Then|And|But|GivenS|WhenS|ThenS|AndS|ButS)[ \t]*\(""",
         setOf(RegexOption.MULTILINE)
@@ -45,14 +42,28 @@ object KtStepExtractor {
             parseExpr(kw, expr, filePath, line)
         }.toList()
 
+    /**
+     * Extracts the text inside the outer parentheses of a step call, starting
+     * immediately after the opening `(`.  Tracks string literals so that `(` and `)`
+     * inside e.g. `regex("(\\d+)")` or `Given("price is ($)")` do not corrupt the
+     * paren depth counter.
+     */
     private fun extractExpr(content: String, startPos: Int): String {
-        var depth = 1; var i = startPos
+        var depth = 1
+        var i = startPos
+        var inStr = false
+        var escape = false
         val sb = StringBuilder()
         while (i < content.length && depth > 0) {
-            when (content[i]) {
-                '(' -> { depth++; sb.append('(') }
-                ')' -> { depth--; if (depth > 0) sb.append(')') }
-                else -> sb.append(content[i])
+            val c = content[i]
+            when {
+                escape             -> { sb.append(c); escape = false }
+                c == '\\' && inStr -> { sb.append(c); escape = true }
+                c == '"'           -> { sb.append(c); inStr = !inStr }
+                inStr              -> sb.append(c)
+                c == '('           -> { depth++; sb.append(c) }
+                c == ')'           -> { depth--; if (depth > 0) sb.append(c) }
+                else               -> sb.append(c)
             }
             i++
         }
@@ -70,7 +81,7 @@ object KtStepExtractor {
         if (lead == null && !rest.startsWith('/')) return null
 
         val lits = mutableListOf<String>()
-        val exts = mutableListOf<Pair<String, String>>() // (display, regex pattern)
+        val exts = mutableListOf<Pair<String, String>>()
         lead?.let { lits += it }
 
         splitOnSlash(rest).forEach { seg ->
@@ -90,25 +101,42 @@ object KtStepExtractor {
         return KtStepDefinition(keyword, displayText, pattern, lits, exts.size, file, line)
     }
 
+    /** Returns the index of the closing unescaped `"` starting from [from]. */
     private fun findClosingQuote(s: String, from: Int): Int {
         var i = from
-        while (i < s.length && s[i] != '"') {
-            if (s[i] == '\\') i++
-            i++
+        while (i < s.length) {
+            when {
+                s[i] == '\\' -> i += 2  // skip escaped char
+                s[i] == '"'  -> return i
+                else         -> i++
+            }
         }
         return i
     }
 
+    /**
+     * Splits [s] on top-level `/` characters (i.e. outside `()`, `[]`, and string
+     * literals).  A `/` inside a regex or quoted string must not be treated as a
+     * separator — e.g. `When("rate is " / string / " req/s")`.
+     */
     private fun splitOnSlash(s: String): List<String> {
-        val parts = mutableListOf<String>(); val cur = StringBuilder(); var depth = 0
+        val parts = mutableListOf<String>()
+        val cur   = StringBuilder()
+        var depth  = 0
+        var inStr  = false
+        var escape = false
         s.forEach { c ->
-            when (c) {
-                '(', '[' -> { depth++; cur.append(c) }
-                ')', ']' -> { depth--; cur.append(c) }
-                '/' -> if (depth == 0) {
+            when {
+                escape             -> { cur.append(c); escape = false }
+                c == '\\' && inStr -> { cur.append(c); escape = true }
+                c == '"'           -> { cur.append(c); inStr = !inStr }
+                inStr              -> cur.append(c)
+                c == '(' || c == '[' -> { depth++; cur.append(c) }
+                c == ')' || c == ']' -> { depth--; cur.append(c) }
+                c == '/' && depth == 0 -> {
                     cur.toString().trim().takeIf { it.isNotEmpty() }?.let { parts += it }
                     cur.clear()
-                } else cur.append(c)
+                }
                 else -> cur.append(c)
             }
         }
@@ -128,11 +156,14 @@ object KtStepExtractor {
             Pair("oneOf(${alts.joinToString(",")})", pat)
         }
         name == "optional" -> {
-            val text = fullText.dropWhile { it != '"' }.drop(1).takeWhile { it != '"' }
+            // Use findClosingQuote to handle escaped quotes inside the literal
+            val qStart = fullText.indexOf('"')
+            val text   = if (qStart < 0) "" else fullText.substring(qStart + 1, findClosingQuote(fullText, qStart + 1))
             Pair("optional(\"$text\")", "(${java.util.regex.Pattern.quote(text)})?")
         }
         name == "regex" -> {
-            val pat = fullText.dropWhile { it != '"' }.drop(1).takeWhile { it != '"' }
+            val qStart = fullText.indexOf('"')
+            val pat    = if (qStart < 0) ".+" else fullText.substring(qStart + 1, findClosingQuote(fullText, qStart + 1))
             Pair("regex(\"$pat\")", pat)
         }
         else -> {
@@ -161,6 +192,5 @@ object KtStepExtractor {
     }
 
     private fun normalizeKeyword(kw: String): String =
-        (if (kw.endsWith('S')) kw.dropLast(1) else kw)
-            .let { if (it in setOf("Given", "When", "Then", "And", "But")) it else it }
+        if (kw.endsWith('S')) kw.dropLast(1) else kw
 }

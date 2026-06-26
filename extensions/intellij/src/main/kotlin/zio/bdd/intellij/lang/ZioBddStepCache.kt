@@ -5,13 +5,15 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.vfs.VirtualFile
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class ZioBddStepCache(private val project: Project) {
 
-    private val cache      = ConcurrentHashMap<String, List<KtStepDefinition>>()
+    // Single volatile reference — swapping it is atomic, so readers never see
+    // a partially-populated map during a refresh.
+    @Volatile private var snapshot: Map<String, List<KtStepDefinition>> = emptyMap()
+
     private val lastScan   = AtomicLong(0L)
     private val refreshing = AtomicBoolean(false)
 
@@ -21,22 +23,23 @@ class ZioBddStepCache(private val project: Project) {
     }
 
     fun getStepDefinitions(): List<KtStepDefinition> {
-        if (System.currentTimeMillis() - lastScan.get() > TTL_MS) {
-            scheduleRefresh()
-        }
-        return cache.values.flatten()
+        if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
+        return snapshot.values.flatten()
     }
 
-    /** Blocking refresh — use from pooled threads (e.g. tool-window build) when the
-     *  cache must be warm before suite grouping can work correctly. */
+    /** Blocking warm-up for callers (e.g. tool window) that need the cache before proceeding. */
     fun ensureWarmed() {
-        if (cache.isEmpty() || System.currentTimeMillis() - lastScan.get() > TTL_MS) {
-            refresh()
+        if (snapshot.isEmpty() || System.currentTimeMillis() - lastScan.get() > TTL_MS) {
+            // Only one thread does the blocking refresh; others return with whatever
+            // is already in the snapshot rather than stacking up blocking calls.
+            if (refreshing.compareAndSet(false, true)) {
+                try { doRefresh() } finally { refreshing.set(false) }
+            }
         }
     }
 
     fun invalidate() {
-        cache.clear()
+        snapshot  = emptyMap()
         lastScan.set(0L)
     }
 
@@ -45,16 +48,15 @@ class ZioBddStepCache(private val project: Project) {
      *  Falls back to `"*"` when the cache is empty or nothing matches. */
     fun suiteNamesForFeature(featureFile: VirtualFile): String {
         if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
-        val entries = cache.entries.toList()
-        if (entries.isEmpty()) return "*"
+        val current = snapshot
+        if (current.isEmpty()) return "*"
         val steps = extractFeatureSteps(featureFile)
         if (steps.isEmpty()) return "*"
-        val matched = entries
+        val matched = current.entries
             .filter { (_, defs) ->
                 defs.isNotEmpty() && steps.any { (kw, text) ->
-                    suiteMatchCandidates(kw, defs).any { def ->
-                        try { Regex(def.pattern).matches(text) } catch (_: Exception) { false }
-                    }
+                    ZioBddStepMatcher.candidatesFor(kw, defs)
+                        .any { def -> ZioBddStepMatcher.matchesStep(text, def) }
                 }
             }
             .map { (path, _) -> "*${java.io.File(path).nameWithoutExtension}*" }
@@ -84,27 +86,16 @@ class ZioBddStepCache(private val project: Project) {
             }
         } catch (_: Exception) { emptyList() }
 
-    private fun suiteMatchCandidates(keyword: String, defs: List<KtStepDefinition>): List<KtStepDefinition> {
-        val kw = keyword.lowercase()
-        return when (kw) {
-            "and", "but" -> defs
-            else -> defs.filter { def ->
-                val dk = def.keyword.lowercase()
-                dk == kw || dk == "${kw}s"
-            }
-        }
-    }
-
     private fun scheduleRefresh() {
         if (!refreshing.compareAndSet(false, true)) return
         ApplicationManager.getApplication().executeOnPooledThread {
-            try { refresh() } finally { refreshing.set(false) }
+            try { doRefresh() } finally { refreshing.set(false) }
         }
     }
 
-    private fun refresh() {
+    private fun doRefresh() {
         // 1. Static scan: collects file + line info for goto-definition and hover.
-        val fresh = ConcurrentHashMap<String, List<KtStepDefinition>>()
+        val fresh = mutableMapOf<String, List<KtStepDefinition>>()
         try {
             scalaFiles().forEach { vf ->
                 try {
@@ -116,28 +107,24 @@ class ZioBddStepCache(private val project: Project) {
         } catch (_: Exception) {}
 
         // 2. BSP class-loading: upgrade step patterns with runtime-accurate regexes.
-        //    Works once the LSP server has started and extracted zio-bdd-lsp.jar to
-        //    tmpdir (requires zio-bdd-tooling issue #2 merged).  If unavailable, the
-        //    static-scan patterns are used as-is.
+        //    Works once the LSP server has extracted zio-bdd-lsp.jar. If unavailable,
+        //    the static-scan patterns are used as-is.
         val bspSteps = BspStepLoader.loadSteps(project)
-        if (bspSteps != null && bspSteps.isNotEmpty()) {
+        if (!bspSteps.isNullOrEmpty()) {
             val byKey = bspSteps.associate { s ->
                 (s.keyword.lowercase() to runtimeLiteralKey(s.displayText)) to s
             }
-            val upgraded = ConcurrentHashMap<String, List<KtStepDefinition>>()
-            fresh.forEach { (path, defs) ->
-                upgraded[path] = defs.map { sd ->
+            fresh.replaceAll { _, defs ->
+                defs.map { sd ->
                     val key = sd.keyword.lowercase() to staticLiteralKey(sd.displayText)
                     val rs  = byKey[key]
                     if (rs != null) sd.copy(pattern = rs.pattern) else sd
                 }
             }
-            fresh.clear()
-            fresh.putAll(upgraded)
         }
 
-        cache.clear()
-        cache.putAll(fresh)
+        // Atomic swap — no reader ever sees a partially-populated map
+        snapshot = fresh
         lastScan.set(System.currentTimeMillis())
     }
 
