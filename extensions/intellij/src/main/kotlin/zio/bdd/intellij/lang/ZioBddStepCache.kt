@@ -32,6 +32,61 @@ class ZioBddStepCache(private val project: Project) {
         lastScan.set(0L)
     }
 
+    /** Returns the sbt test selector (e.g. `"*CalculatorSuite*"`) for the suite(s)
+     *  whose step definitions match at least one step in [featureFile].
+     *  Falls back to `"*"` when the cache is empty or nothing matches. */
+    fun suiteNamesForFeature(featureFile: VirtualFile): String {
+        if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
+        val entries = cache.entries.toList()
+        if (entries.isEmpty()) return "*"
+        val steps = extractFeatureSteps(featureFile)
+        if (steps.isEmpty()) return "*"
+        val matched = entries
+            .filter { (_, defs) ->
+                defs.isNotEmpty() && steps.any { (kw, text) ->
+                    suiteMatchCandidates(kw, defs).any { def ->
+                        try { Regex(def.pattern).matches(text) } catch (_: Exception) { false }
+                    }
+                }
+            }
+            .map { (path, _) -> "*${java.io.File(path).nameWithoutExtension}*" }
+        return if (matched.isEmpty()) "*" else matched.joinToString(" ")
+    }
+
+    /** Like [suiteNamesForFeature] but returns bare names (without wildcards) for display. */
+    fun suiteNamesListForFeature(featureFile: VirtualFile): List<String> {
+        val selector = suiteNamesForFeature(featureFile)
+        if (selector == "*") return emptyList()
+        return selector.split(" ").map { it.trim('*') }
+    }
+
+    /** Collects all `.feature` files reachable from the project's content source roots. */
+    fun featureFiles(): List<VirtualFile> {
+        val acc = mutableListOf<VirtualFile>()
+        ProjectRootManager.getInstance(project).contentSourceRoots.forEach { collectByExt(it, "feature", acc) }
+        return acc
+    }
+
+    private fun extractFeatureSteps(file: VirtualFile): List<Pair<String, String>> =
+        try {
+            String(file.contentsToByteArray(), file.charset).lines().mapNotNull { line ->
+                val t  = line.trim()
+                val kw = listOf("Given", "When", "Then", "And", "But").firstOrNull { t.startsWith("$it ") }
+                if (kw != null) kw to t.removePrefix("$kw ").trim() else null
+            }
+        } catch (_: Exception) { emptyList() }
+
+    private fun suiteMatchCandidates(keyword: String, defs: List<KtStepDefinition>): List<KtStepDefinition> {
+        val kw = keyword.lowercase()
+        return when (kw) {
+            "and", "but" -> defs
+            else -> defs.filter { def ->
+                val dk = def.keyword.lowercase()
+                dk == kw || dk == "${kw}s"
+            }
+        }
+    }
+
     private fun scheduleRefresh() {
         if (!refreshing.compareAndSet(false, true)) return
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -90,15 +145,15 @@ class ZioBddStepCache(private val project: Project) {
 
     private fun scalaFiles(): List<VirtualFile> {
         val acc = mutableListOf<VirtualFile>()
-        ProjectRootManager.getInstance(project).contentSourceRoots.forEach { collect(it, acc) }
+        ProjectRootManager.getInstance(project).contentSourceRoots.forEach { collectByExt(it, "scala", acc) }
         return acc
     }
 
-    private fun collect(dir: VirtualFile, acc: MutableList<VirtualFile>) {
+    private fun collectByExt(dir: VirtualFile, ext: String, acc: MutableList<VirtualFile>) {
         if (!dir.isValid || !dir.isDirectory) return
         for (child in dir.children) {
-            if (child.isDirectory) collect(child, acc)
-            else if (child.extension == "scala") acc += child
+            if (child.isDirectory) collectByExt(child, ext, acc)
+            else if (child.extension == ext) acc += child
         }
     }
 }

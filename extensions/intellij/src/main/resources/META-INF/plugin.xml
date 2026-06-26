@@ -82,6 +82,12 @@
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddDocumentationProvider"/>
 
+        <!-- ── Scenario Explorer tool window ─────────────────────────────── -->
+        <toolWindow id="zio-bdd"
+                    anchor="left"
+                    factoryClass="zio.bdd.intellij.toolwindow.ZioBddScenarioExplorerFactory"
+                    icon="/icons/feature.svg"/>
+
     </extensions>
 
 </idea-plugin>

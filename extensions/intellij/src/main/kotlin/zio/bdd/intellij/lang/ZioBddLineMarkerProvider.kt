@@ -6,16 +6,35 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.psi.PsiElement
 import zio.bdd.intellij.execution.ZioBddRunConfigurationProducer
+import zio.bdd.intellij.lang.psi.ZioBddFeatureHeader
 import zio.bdd.intellij.lang.psi.ZioBddScenarioHeader
 
 class ZioBddLineMarkerProvider : LineMarkerProvider {
-    override fun getLineMarkerInfo(element: PsiElement): LineMarkerInfo<*>? {
-        if (element !is ZioBddScenarioHeader) return null
-        if (element.isBackground()) return null
-        return createMarker(element)
+    override fun getLineMarkerInfo(element: PsiElement): LineMarkerInfo<*>? = when {
+        element is ZioBddFeatureHeader                         -> createFeatureMarker(element)
+        element is ZioBddScenarioHeader && !element.isBackground() -> createScenarioMarker(element)
+        else                                                   -> null
     }
 
-    private fun createMarker(scenario: ZioBddScenarioHeader): LineMarkerInfo<ZioBddScenarioHeader> {
+    private fun createFeatureMarker(feature: ZioBddFeatureHeader): LineMarkerInfo<ZioBddFeatureHeader> {
+        val name = feature.getFeatureName()
+        return LineMarkerInfo(
+            feature,
+            feature.textRange,
+            AllIcons.Actions.Execute,
+            { "Run feature: $name" },
+            { _, el ->
+                if (el.isValid) {
+                    val vf = el.containingFile?.virtualFile ?: return@LineMarkerInfo
+                    ZioBddRunConfigurationProducer().runFeature(el.project, vf, name)
+                }
+            },
+            GutterIconRenderer.Alignment.LEFT,
+            { "Run feature: $name" },
+        )
+    }
+
+    private fun createScenarioMarker(scenario: ZioBddScenarioHeader): LineMarkerInfo<ZioBddScenarioHeader> {
         val name = scenario.getScenarioName()
         return LineMarkerInfo(
             scenario,
