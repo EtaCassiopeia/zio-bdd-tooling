@@ -109,6 +109,21 @@ final class WorkspaceIndex private (
       .collect { case s if s.startsWith("\"") => s.stripPrefix("\"").stripSuffix("\"") }
       .mkString
 
+  // Directory names that are never useful to scan: build output, VCS, IDE metadata,
+  // dependency caches, and tool-specific directories.
+  private val excludedDirs = Set(
+    "target",
+    ".git",
+    "node_modules",
+    ".bloop",
+    ".metals",
+    ".bsp",
+    ".idea",
+    ".scala-build",
+    "out",
+    ".cache"
+  )
+
   /** Returns (scalaPaths, featurePaths). Empty lists if root is missing. */
   private def collectFiles(root: Path): (List[String], List[String]) =
     if !Files.exists(root) then (Nil, Nil)
@@ -117,7 +132,11 @@ final class WorkspaceIndex private (
         .walk(root)
         .iterator()
         .asScala
-        .filter(Files.isRegularFile(_))
+        .filter { p =>
+          Files.isRegularFile(p) &&
+          // Reject any path whose components include an excluded directory name.
+          !p.iterator().asScala.exists(part => excludedDirs.contains(part.toString))
+        }
         .map(_.toAbsolutePath.toString)
         .toList
       (all.filter(_.endsWith(".scala")), all.filter(_.endsWith(".feature")))

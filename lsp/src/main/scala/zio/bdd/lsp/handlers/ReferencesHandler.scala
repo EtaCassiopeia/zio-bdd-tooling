@@ -32,29 +32,38 @@ object ReferencesHandler:
         case None => ZIO.succeed(Nil)
         case Some(defn) =>
           index.allFeatures.map { features =>
-            for
-              feature  <- features
-              scenario <- feature.scenarios
-              step     <- scenario.steps
-              if matchesDefn(step.pattern, defn)
-              file   <- feature.file.toList
-              lspLine = step.line.map(_ - 1).getOrElse(0).max(0) // Gherkin 1-based → LSP 0-based
-            yield new Location(
-              s"file://$file",
-              new Range(
-                new Position(lspLine, 0),
-                new Position(lspLine, step.pattern.length)
+            val raw =
+              for
+                feature  <- features
+                scenario <- feature.scenarios
+                step     <- scenario.steps
+                if matchesDefn(step.pattern, defn)
+                file   <- feature.file.toList
+                lspLine = step.line.map(_ - 1).getOrElse(0).max(0) // Gherkin 1-based → LSP 0-based
+              yield (file, step.pattern, lspLine)
+            // Deduplicate: Scenario Outline rows all carry the same `<col>` template
+            // text, so multiple expanded scenarios produce identical (file, text) pairs.
+            // Keep the first occurrence of each (file, stepText) pair.
+            raw.distinctBy { case (file, text, _) => (file, text) }.map { case (file, text, lspLine) =>
+              new Location(
+                s"file://$file",
+                new Range(new Position(lspLine, 0), new Position(lspLine, text.length))
               )
-            )
+            }
           }
 
-  // Count usages without building full Location objects (used by code-lens).
+  // Count distinct (file, stepText) usages — same deduplication as references().
   def usageCount(defn: StepDefinition, index: WorkspaceIndex): UIO[Int] =
     index.allFeatures.map { features =>
-      features.iterator
-        .flatMap(_.scenarios)
-        .flatMap(_.steps)
-        .count(s => matchesDefn(s.pattern, defn))
+      (for
+        feature  <- features
+        scenario <- feature.scenarios
+        step     <- scenario.steps
+        if matchesDefn(step.pattern, defn)
+        file <- feature.file.toList
+      yield (file, step.pattern))
+        .distinctBy(identity)
+        .size
     }
 
   // The nearest step definition to `line` within ±3 lines (allows cursor to be
