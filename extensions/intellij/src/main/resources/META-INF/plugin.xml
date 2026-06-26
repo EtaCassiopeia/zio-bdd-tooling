@@ -57,10 +57,15 @@
                 implementationClass="zio.bdd.intellij.lang.ZioBddCompletionContributor"
                 order="first"/>
 
-        <!-- ── Run gutter icons ───────────────────────────────────────────── -->
+        <!-- ── Run gutter icons (feature files) ─────────────────────────── -->
         <codeInsight.lineMarkerProvider
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddLineMarkerProvider"/>
+
+        <!-- ── Find-usages gutter on Scala step definitions ─────────────── -->
+        <codeInsight.lineMarkerProvider
+                language="Scala"
+                implementationClass="zio.bdd.intellij.lang.ZioBddStepDefLineMarkerProvider"/>
 
         <!-- ── Run configurations ─────────────────────────────────────────── -->
         <configurationType

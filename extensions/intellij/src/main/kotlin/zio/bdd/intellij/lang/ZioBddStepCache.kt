@@ -27,6 +27,14 @@ class ZioBddStepCache(private val project: Project) {
         return cache.values.flatten()
     }
 
+    /** Blocking refresh — use from pooled threads (e.g. tool-window build) when the
+     *  cache must be warm before suite grouping can work correctly. */
+    fun ensureWarmed() {
+        if (cache.isEmpty() || System.currentTimeMillis() - lastScan.get() > TTL_MS) {
+            refresh()
+        }
+    }
+
     fun invalidate() {
         cache.clear()
         lastScan.set(0L)

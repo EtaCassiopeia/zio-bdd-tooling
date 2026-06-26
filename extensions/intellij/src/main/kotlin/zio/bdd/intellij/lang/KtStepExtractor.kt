@@ -17,8 +17,11 @@ data class KtStepDefinition(
  */
 object KtStepExtractor {
 
+    // Use [ \t]* (not \s*) so we never match across line boundaries:
+    // \s* would let ^ anchor on a blank line, then consume the newline + indent
+    // of the next line, landing the line-count 1-2 lines too early.
     private val STEP_CALL = Regex(
-        """(?m)^\s*(Given|When|Then|And|But|GivenS|WhenS|ThenS|AndS|ButS)\s*\(""",
+        """(?m)^[ \t]*(Given|When|Then|And|But|GivenS|WhenS|ThenS|AndS|ButS)[ \t]*\(""",
         setOf(RegexOption.MULTILINE)
     )
 

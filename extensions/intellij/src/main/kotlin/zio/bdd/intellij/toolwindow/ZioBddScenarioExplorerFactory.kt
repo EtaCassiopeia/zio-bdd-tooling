@@ -157,7 +157,9 @@ class ZioBddScenarioExplorerPanel(private val project: Project) : SimpleToolWind
     }
 
     private fun applyFilter() {
-        val text = searchField.text.trim().lowercase()
+        val raw  = searchField.text.trim().lowercase()
+        // Allow "@tagname" or "tagname" to filter by tag
+        val text = raw.trimStart('@')
         root.removeAllChildren()
 
         var totalFeatures  = 0
@@ -208,7 +210,8 @@ class ZioBddScenarioExplorerPanel(private val project: Project) : SimpleToolWind
     }
 
     private fun buildGroups(): List<Pair<SuiteNode, List<FeatureInfo>>> {
-        val cache    = ZioBddStepCache.getInstance(project)
+        val cache = ZioBddStepCache.getInstance(project)
+        cache.ensureWarmed()   // block until the step cache is populated
         val features = cache.featureFiles().mapNotNull(::parseFeature)
 
         val grouped   = mutableMapOf<String, MutableList<FeatureInfo>>()
