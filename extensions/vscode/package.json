@@ -1,9 +1,9 @@
 {
   "name": "zio-bdd",
-  "displayName": "zio-bdd",
+  "displayName": "ZIO BDD",
   "description": "IDE support for zio-bdd Scala BDD test framework — syntax highlighting, go-to-definition, diagnostics, completion, and run configurations for .feature files.",
   "version": "0.1.0",
-  "publisher": "zio-bdd",
+  "publisher": "EtaCassiopeia",
   "repository": {
     "type": "git",
     "url": "https://github.com/EtaCassiopeia/zio-bdd-tooling"
