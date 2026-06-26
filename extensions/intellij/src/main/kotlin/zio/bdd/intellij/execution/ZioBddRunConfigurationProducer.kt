@@ -64,6 +64,15 @@ class ZioBddRunConfigurationProducer : LazyRunConfigurationProducer<ZioBddRunCon
         runFeatureInternal(project, featureFile.path, featureName, suiteSelector)
     }
 
+    fun runAll(project: Project) {
+        val settings = makeSettings(project, "Run All Tests")
+        (settings.configuration as ZioBddRunConfiguration).apply {
+            suiteName        = "*"
+            workingDirectory = project.basePath ?: ""
+        }
+        launch(project, settings)
+    }
+
     fun runSuite(project: Project, suiteSelector: String, displayName: String) {
         val settings = makeSettings(project, "Run Suite: $displayName")
         (settings.configuration as ZioBddRunConfiguration).apply {
