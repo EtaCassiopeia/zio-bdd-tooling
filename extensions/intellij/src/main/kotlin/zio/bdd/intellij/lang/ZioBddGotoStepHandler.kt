@@ -1,8 +1,10 @@
 package zio.bdd.intellij.lang
 
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
+import com.intellij.pom.Navigatable
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -35,14 +37,47 @@ class ZioBddGotoStepHandler : GotoDeclarationHandler {
         val doc = FileDocumentManager.getInstance().getDocument(vf)
         if (doc == null || match.line < 0 || match.line >= doc.lineCount) return arrayOf(psf)
 
-        // Navigate to the first non-whitespace character on the matched line so the
-        // cursor lands on the step keyword (Given/When/Then) rather than leading spaces.
-        val lineStart = doc.getLineStartOffset(match.line)
-        val lineEnd   = doc.getLineEndOffset(match.line)
-        val lineText  = doc.getText(TextRange(lineStart, lineEnd))
-        val col       = lineText.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
-        val target    = psf.findElementAt(lineStart + col) ?: psf
+        val lineStart    = doc.getLineStartOffset(match.line)
+        val lineEnd      = doc.getLineEndOffset(match.line)
+        val lineText     = doc.getText(TextRange(lineStart, lineEnd))
+        val col          = lineText.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+        val endCol       = stepCallEndCol(lineText, col)
+        val targetOffset = lineStart + col
+        val targetRange  = TextRange(lineStart + col, lineStart + endCol)
+
+        // Synthetic navigatable element with the exact range we want highlighted.
+        // Delegating PsiElement to `psf` gives IntelliJ a valid file reference for all
+        // other lookups; we override only range/offset/navigate so the highlight covers
+        // just the step call text (keyword through closing ')'), not the whole line.
+        val target = object : PsiElement by psf, Navigatable {
+            override fun getTextRange()         = targetRange
+            override fun getTextOffset()        = targetOffset
+            override fun getNavigationElement() = this as PsiElement
+            override fun getOriginalElement()   = this as PsiElement
+            override fun navigate(requestFocus: Boolean) =
+                OpenFileDescriptor(psf.project, vf, targetOffset).navigate(requestFocus)
+            override fun canNavigate()         = true
+            override fun canNavigateToSource() = true
+        }
         return arrayOf(target)
+    }
+
+    /** Returns the column (exclusive) just after the closing `)` of the step method call. */
+    private fun stepCallEndCol(lineText: String, startCol: Int): Int {
+        var depth  = 0
+        var inStr  = false
+        var escape = false
+        for (i in startCol until lineText.length) {
+            val c = lineText[i]
+            when {
+                escape             -> escape = false
+                c == '\\' && inStr -> escape = true
+                c == '"'           -> inStr = !inStr
+                !inStr && c == '(' -> depth++
+                !inStr && c == ')' -> { depth--; if (depth == 0) return i + 1 }
+            }
+        }
+        return lineText.trimEnd().length
     }
 
     private fun findEnclosingStep(e: PsiElement): ZioBddStep? {

@@ -42,6 +42,11 @@
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddParserDefinition"/>
 
+        <!-- ── Sub-line syntax highlighting (keyword vs title vs step text) ── -->
+        <annotator
+                language="ZioBddGherkin"
+                implementationClass="zio.bdd.intellij.lang.ZioBddSyntaxAnnotator"/>
+
         <!-- ── Step validation ────────────────────────────────────────────── -->
         <annotator
                 language="ZioBddGherkin"
