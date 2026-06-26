@@ -358,12 +358,12 @@ final class ZIOBddServer(
       for
         suiteFiles <- index.suiteFilesForFeature(featurePath)
         selector    = handlers.CodeLensHandler.suiteSelector(suiteFiles)
-        flags       = scenarioName match
-                        case Some(name) =>
-                          s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}" +
-                          s" --scenario-name ${handlers.CodeLensHandler.shellQuote(name)} --focused"
-                        case None =>
-                          s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}"
+        flags = scenarioName match
+                  case Some(name) =>
+                    s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}" +
+                      s" --scenario-name ${handlers.CodeLensHandler.shellQuote(name)} --focused"
+                  case None =>
+                    s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}"
       yield handlers.CodeLensHandler.buildRunCommand(selector, flags)
     )
 
