@@ -53,16 +53,16 @@ export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
           const name = msg.scenarioName as string;
           const term = vscode.window.createTerminal('zio-bdd');
           term.show();
-          term.sendText(`${sbt} "testOnly * -- --scenario-name '${name.replace(/'/g, "'\\''")}'"`);
+          term.sendText(`${sbt} "testOnly * -- --scenario-name '${name.replace(/'/g, "'\\''")}' --focused"`);
           break;
         }
         case 'runFeature': {
           const conf = vscode.workspace.getConfiguration('zio-bdd');
           const sbt  = conf.get<string>('sbtCommand') ?? 'sbt';
-          const name = msg.featureName as string;
+          const fsPath = msg.fsPath as string;
           const term = vscode.window.createTerminal('zio-bdd');
           term.show();
-          term.sendText(`${sbt} "testOnly * -- --feature '${name.replace(/'/g, "'\\''")}'"`);
+          term.sendText(`${sbt} "testOnly * -- --feature-file '${fsPath.replace(/'/g, "'\\''")}' --focused"`);
           break;
         }
         case 'runAll': {
@@ -393,7 +393,7 @@ featRoot.addEventListener('click', e => {
   const featRun = target.closest('[data-feat-run]');
   if (featRun) {
     e.stopPropagation();
-    vscode.postMessage({ type: 'runFeature', featureName: featRun.dataset.featRun });
+    vscode.postMessage({ type: 'runFeature', fsPath: featRun.dataset.featRun });
     return;
   }
 
@@ -458,7 +458,7 @@ function renderFeature(f, i) {
       '<span class="feat-name">' + esc(f.name) + '</span>' +
       '<div class="feat-tags">' + featTags + '</div>' +
       '<span class="feat-count">' + f.scenarios.length + '</span>' +
-      '<button class="feat-run" data-feat-run="' + esc(f.name) + '" title="Run feature">▶</button>' +
+      '<button class="feat-run" data-feat-run="' + esc(f.fsPath) + '" title="Run feature">▶</button>' +
     '</div>' +
     '<div class="feature-body">' + body + '</div>' +
     '</div>'

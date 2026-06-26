@@ -2,6 +2,7 @@ package zio.bdd.lsp.handlers
 
 import zio.*
 import zio.test.*
+import zio.bdd.lsp.WorkspaceIndex
 
 object CodeLensHandlerSpec extends ZIOSpecDefault:
 
@@ -13,7 +14,9 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
 
   def spec = suite("CodeLensHandler")(
     test("feature and scenario lenses run a single-quoted, shell-safe sbt command") {
-      for lenses <- CodeLensHandler.codeLenses("file:///tmp/greeting.feature", feature)
+      for
+        index  <- ZIO.service[WorkspaceIndex]
+        lenses <- CodeLensHandler.codeLenses("file:///tmp/greeting.feature", feature, index)
       yield {
         val commands = lenses.map(_.getCommand.getArguments.get(0).toString)
         assertTrue(
@@ -35,7 +38,9 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
           |  Scenario: Greet O'Brien
           |    Given a user named World
           |""".stripMargin
-      for lenses <- CodeLensHandler.codeLenses("file:///tmp/greeting.feature", withQuote)
+      for
+        index  <- ZIO.service[WorkspaceIndex]
+        lenses <- CodeLensHandler.codeLenses("file:///tmp/greeting.feature", withQuote, index)
       yield {
         val scenarioCommand = lenses(1).getCommand.getArguments.get(0).toString
         assertTrue(
@@ -44,4 +49,4 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
         )
       }
     }
-  )
+  ).provide(WorkspaceIndex.layer)
