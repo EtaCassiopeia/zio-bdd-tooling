@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>zio.bdd</id>
     <name>zio-bdd</name>
-    <vendor>zio-bdd</vendor>
+    <vendor>EtaCassiopeia</vendor>
 
     <description><![CDATA[
         IDE support for the zio-bdd Scala 3 / ZIO 2 BDD test framework.<br/>
