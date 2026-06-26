@@ -46,10 +46,13 @@ object ReferencesHandler:
             // entry. Using text as the key would wrongly merge two *different* outlines
             // that happen to share step text (e.g. a @property outline and a table
             // outline both using "When I subtract <b> from <a>").
-            raw.distinctBy { case (file, _, line) => (file, line) }.map { case (file, text, lspLine) =>
+            raw.distinctBy { case (file, _, line) => (file, line) }.map { case (file, _, lspLine) =>
               new Location(
                 s"file://$file",
-                new Range(new Position(lspLine, 0), new Position(lspLine, text.length))
+                // Int.MaxValue as end column: VS Code clamps it to the real line end,
+                // giving a full-line highlight. step.pattern omits the leading keyword
+                // so using its length as the end column cuts off mid-line.
+                new Range(new Position(lspLine, 0), new Position(lspLine, Int.MaxValue))
               )
             }
           }
