@@ -1,68 +1,27 @@
 package zio.bdd.intellij.toolwindow
 
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.google.gson.Gson
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.SimpleToolWindowPanel
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.ui.DocumentAdapter
-import com.intellij.ui.JBColor
-import com.intellij.ui.SearchTextField
-import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.treeStructure.Tree
+import com.intellij.ui.jcef.JBCefApp
+import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
+import com.intellij.ui.jcef.JBCefJSQuery
+import org.cef.browser.CefBrowser
+import org.cef.browser.CefFrame
+import org.cef.handler.CefLoadHandlerAdapter
 import zio.bdd.intellij.execution.ZioBddRunConfigurationProducer
 import zio.bdd.intellij.lang.ZioBddStepCache
 import java.awt.BorderLayout
-import java.awt.Component
-import java.awt.Font
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
-import javax.swing.JMenuItem
+import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JPopupMenu
-import javax.swing.event.DocumentEvent
-import javax.swing.tree.DefaultMutableTreeNode
-import javax.swing.tree.DefaultTreeCellRenderer
-import javax.swing.tree.DefaultTreeModel
-
-// ── Data model ────────────────────────────────────────────────────────────────
-
-data class SuiteNode(val name: String, val selector: String)
-data class FeatureNode(val name: String, val file: VirtualFile, val suiteSelector: String, val tags: List<String> = emptyList())
-data class ScenarioNode(
-    val name: String,
-    val line: Int,
-    val file: VirtualFile,
-    val suiteSelector: String,
-    val tags: List<String> = emptyList(),
-    val isIgnored: Boolean = false,
-    val isOutline: Boolean = false,
-)
-
-private data class FeatureInfo(
-    val name: String,
-    val file: VirtualFile,
-    val tags: List<String>,
-    val scenarios: List<ScenarioInfo>,
-)
-
-private data class ScenarioInfo(
-    val name: String,
-    val line: Int,
-    val tags: List<String>,
-    val isIgnored: Boolean,
-    val isOutline: Boolean,
-)
-
-// ── Factory ──────────────────────────────────────────────────────────────────
+import javax.swing.SwingConstants
 
 class ZioBddScenarioExplorerFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -72,296 +31,163 @@ class ZioBddScenarioExplorerFactory : ToolWindowFactory {
     }
 }
 
-// ── Panel ─────────────────────────────────────────────────────────────────────
+// ── Data model serialised to JSON and sent to the browser ─────────────────
 
-class ZioBddScenarioExplorerPanel(private val project: Project) : SimpleToolWindowPanel(true, true) {
+private data class ScenarioItem(val name: String, val line: Int, val tags: List<String>, val isIgnored: Boolean, val isOutline: Boolean)
+private data class FeatureItem(val uri: String, val fsPath: String, val name: String, val tags: List<String>, val scenarios: List<ScenarioItem>)
+private data class SuiteGroup(val suiteName: String, val scalaFile: String, val featurePaths: List<String>)
+private data class UpdatePayload(val type: String = "update", val features: List<FeatureItem>, val suiteGroups: List<SuiteGroup>)
 
-    private val root        = DefaultMutableTreeNode("root")
-    private val model       = DefaultTreeModel(root)
-    private val tree        = Tree(model)
-    private val searchField = SearchTextField(false)
-    private val statsLabel  = JBLabel("")
+// ── Panel ─────────────────────────────────────────────────────────────────
 
-    // Cached full set; rebuilt on refresh, filtered on every keystroke
-    @Volatile private var allGroups: List<Pair<SuiteNode, List<FeatureInfo>>> = emptyList()
-    @Volatile private var viewBySuite = true
+class ZioBddScenarioExplorerPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
+
+    private val browser: JBCefBrowser?
+    private val query:   JBCefJSQuery?
+    private val gson = Gson()
 
     init {
-        tree.isRootVisible    = false
-        tree.showsRootHandles = true
-        tree.cellRenderer     = ExplorerCellRenderer()
-
-        tree.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent)  { if (e.clickCount >= 2) onDoubleClick(e) }
-            override fun mousePressed(e: MouseEvent)  { if (e.isPopupTrigger) showPopup(e) }
-            override fun mouseReleased(e: MouseEvent) { if (e.isPopupTrigger) showPopup(e) }
-        })
-
-        searchField.textEditor.emptyText.text = "Filter by name, tag…"
-        searchField.addDocumentListener(object : DocumentAdapter() {
-            override fun textChanged(e: DocumentEvent) { applyFilter() }
-        })
-
-        statsLabel.foreground = JBColor.GRAY
-        statsLabel.font       = statsLabel.font.deriveFont(Font.PLAIN, 10f)
-
-        // ── Toolbar ───────────────────────────────────────────────────────────
-        val group = DefaultActionGroup()
-
-        group.add(object : AnAction("Refresh", "Reload suite groupings", AllIcons.Actions.Refresh) {
-            override fun actionPerformed(e: AnActionEvent) { triggerRefresh() }
-        })
-
-        group.add(object : AnAction("Toggle View", "Switch between suite-grouped and flat view", AllIcons.Actions.GroupByModule) {
-            override fun actionPerformed(e: AnActionEvent) {
-                viewBySuite = !viewBySuite
-                applyFilter()
-            }
-        })
-
-        group.add(object : AnAction("Run All Tests", "Run sbt test", AllIcons.Actions.Execute) {
-            override fun actionPerformed(e: AnActionEvent) {
-                ZioBddRunConfigurationProducer().runAll(project)
-            }
-        })
-
-        val toolbar = ActionManager.getInstance().createActionToolbar("ZioBddExplorer", group, true)
-        toolbar.targetComponent = tree
-
-        val topBar = JPanel(BorderLayout()).apply {
-            add(toolbar.component, BorderLayout.WEST)
-            add(searchField,       BorderLayout.CENTER)
-        }
-        val bottomBar = JPanel(BorderLayout()).apply {
-            add(statsLabel, BorderLayout.WEST)
-        }
-
-        setToolbar(topBar)
-        val content = JPanel(BorderLayout()).apply {
-            add(JBScrollPane(tree), BorderLayout.CENTER)
-            add(bottomBar,          BorderLayout.SOUTH)
-        }
-        setContent(content)
-
-        triggerRefresh()
-    }
-
-    fun triggerRefresh() {
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val groups = buildGroups()
-            ApplicationManager.getApplication().invokeLater {
-                allGroups = groups
-                applyFilter()
-            }
-        }
-    }
-
-    private fun applyFilter() {
-        val raw  = searchField.text.trim().lowercase()
-        // Allow "@tagname" or "tagname" to filter by tag
-        val text = raw.trimStart('@')
-        root.removeAllChildren()
-
-        var totalFeatures  = 0
-        var totalScenarios = 0
-
-        fun addFeatureNode(fi: FeatureInfo, suiteSelector: String): DefaultMutableTreeNode? {
-            val tagHit      = fi.tags.any { it.lowercase().contains(text) }
-            val nameHit     = fi.name.lowercase().contains(text)
-            val matchedScen = fi.scenarios.filter { s ->
-                s.name.lowercase().contains(text) || s.tags.any { it.lowercase().contains(text) }
-            }
-            val effectiveScenarios = when {
-                text.isEmpty() -> fi.scenarios
-                nameHit || tagHit -> fi.scenarios
-                matchedScen.isNotEmpty() -> matchedScen
-                else -> return null
-            }
-            totalFeatures++
-            val fn = DefaultMutableTreeNode(FeatureNode(fi.name, fi.file, suiteSelector, fi.tags))
-            effectiveScenarios.forEach { s ->
-                totalScenarios++
-                fn.add(DefaultMutableTreeNode(ScenarioNode(s.name, s.line, fi.file, suiteSelector, s.tags, s.isIgnored, s.isOutline)))
-            }
-            return fn
-        }
-
-        if (viewBySuite) {
-            allGroups.forEach { (suiteNode, features) ->
-                val stn = DefaultMutableTreeNode(suiteNode)
-                features.forEach { fi ->
-                    addFeatureNode(fi, suiteNode.selector)?.let { stn.add(it) }
-                }
-                if (stn.childCount > 0) root.add(stn)
-            }
+        if (!JBCefApp.isSupported()) {
+            add(
+                JLabel(
+                    "<html><center>JCEF is not available.<br>Use a JetBrains Runtime (JBR) to enable the Scenario Explorer.</center></html>",
+                    SwingConstants.CENTER,
+                ),
+            )
+            browser = null
+            query   = null
         } else {
-            // Flat view: all features sorted by name, deduped
-            val seen = mutableSetOf<String>()
-            allGroups.flatMap { (_, fis) -> fis }.sortedBy { it.name }.forEach { fi ->
-                if (seen.add(fi.file.path)) {
-                    addFeatureNode(fi, "*")?.let { root.add(it) }
+            val b = JBCefBrowser()
+            browser = b
+            val q = JBCefJSQuery.create(b as JBCefBrowserBase)
+            query = q
+
+            q.addHandler { msgJson ->
+                try { handleMessage(msgJson) } catch (_: Exception) {}
+                null
+            }
+
+            b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
+                override fun onLoadEnd(cb: CefBrowser, frame: CefFrame, status: Int) {
+                    if (frame.isMain) loadData()
                 }
+            }, b.cefBrowser)
+
+            add(b.component, BorderLayout.CENTER)
+            loadHtml()
+        }
+    }
+
+    private fun loadHtml() {
+        val template = javaClass.getResource("/sidebar/index.html")?.readText() ?: return
+        val html     = template.replace("__BRIDGE__", query!!.inject("msgJson"))
+        browser!!.loadHTML(html)
+    }
+
+    private fun loadData() {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val cache = ZioBddStepCache.getInstance(project)
+            cache.ensureWarmed()
+
+            val features    = cache.featureFiles().mapNotNull(::parseFeature)
+            val suiteGroups = buildSuiteGroups(cache, features)
+            val payload     = gson.toJson(UpdatePayload(features = features, suiteGroups = suiteGroups))
+
+            dispatchJs("window.dispatchEvent(new MessageEvent('message',{data:$payload}));")
+        }
+    }
+
+    private fun handleMessage(msgJson: String) {
+        @Suppress("UNCHECKED_CAST")
+        val msg = gson.fromJson(msgJson, Map::class.java) as Map<String, Any>
+        when (msg["type"] as? String) {
+            "refresh"     -> loadData()
+            "runAll"      -> runOnEdt { ZioBddRunConfigurationProducer().runAll(project) }
+            "runSuite"    -> runOnEdt {
+                val name = msg["suiteName"] as? String ?: return@runOnEdt
+                ZioBddRunConfigurationProducer().runSuite(project, "*$name*", name)
+            }
+            "runFeature"  -> runOnEdt {
+                val path  = (msg["fsPath"] as? String) ?: (msg["featureUri"] as? String) ?: return@runOnEdt
+                val suite = msg["suiteName"] as? String
+                val vf    = LocalFileSystem.getInstance().findFileByPath(path) ?: return@runOnEdt
+                ZioBddRunConfigurationProducer().runFeature(project, vf, vf.nameWithoutExtension, suite ?: "*")
+            }
+            "runScenario" -> runOnEdt {
+                val name  = msg["scenarioName"] as? String ?: return@runOnEdt
+                val path  = (msg["featureUri"] as? String) ?: return@runOnEdt
+                val suite = msg["suiteName"] as? String
+                val vf    = LocalFileSystem.getInstance().findFileByPath(path) ?: return@runOnEdt
+                ZioBddRunConfigurationProducer().runScenario(project, name, vf, suite ?: "*")
+            }
+            "openFile"    -> runOnEdt {
+                val path = msg["uri"] as? String ?: return@runOnEdt
+                val line = (msg["line"] as? Double)?.toInt() ?: 0
+                val vf   = LocalFileSystem.getInstance().findFileByPath(path) ?: return@runOnEdt
+                OpenFileDescriptor(project, vf, (line - 1).coerceAtLeast(0), 0).navigate(true)
             }
         }
-
-        model.reload()
-        for (i in 0 until tree.rowCount) tree.expandRow(i)
-        statsLabel.text = "  $totalFeatures feature${if (totalFeatures != 1) "s" else ""} · $totalScenarios scenario${if (totalScenarios != 1) "s" else ""}"
     }
 
-    private fun buildGroups(): List<Pair<SuiteNode, List<FeatureInfo>>> {
-        val cache = ZioBddStepCache.getInstance(project)
-        cache.ensureWarmed()   // block until the step cache is populated
-        val features = cache.featureFiles().mapNotNull(::parseFeature)
-
-        val grouped   = mutableMapOf<String, MutableList<FeatureInfo>>()
-        val ungrouped = mutableListOf<FeatureInfo>()
-
+    private fun buildSuiteGroups(cache: ZioBddStepCache, features: List<FeatureItem>): List<SuiteGroup> {
+        val byName = mutableMapOf<String, MutableList<String>>()
         features.forEach { fi ->
-            val suites = cache.suiteNamesListForFeature(fi.file)
-            if (suites.isEmpty()) ungrouped += fi
-            else suites.forEach { s -> grouped.getOrPut(s) { mutableListOf() } += fi }
+            val vf = LocalFileSystem.getInstance().findFileByPath(fi.fsPath) ?: return@forEach
+            cache.suiteNamesListForFeature(vf).forEach { suiteName ->
+                byName.getOrPut(suiteName) { mutableListOf() } += fi.fsPath
+            }
         }
-
-        val result = mutableListOf<Pair<SuiteNode, List<FeatureInfo>>>()
-        grouped.entries.sortedBy { it.key }.forEach { (name, fis) ->
-            result += SuiteNode(name, "*$name*") to fis.sortedBy { it.name }
+        return byName.entries.sortedBy { it.key }.map { (name, paths) ->
+            SuiteGroup(suiteName = name, scalaFile = "", featurePaths = paths)
         }
-        if (ungrouped.isNotEmpty()) {
-            result += SuiteNode("(Unassigned)", "*") to ungrouped.sortedBy { it.name }
-        }
-        return result
     }
 
-    private fun parseFeature(file: VirtualFile): FeatureInfo? {
+    private fun parseFeature(vf: VirtualFile): FeatureItem? {
         val lines = try {
-            String(file.contentsToByteArray(), file.charset).lines()
+            String(vf.contentsToByteArray(), vf.charset).lines()
         } catch (_: Exception) { return null }
 
-        // Collect pending tags (lines starting with @)
-        var pendingTags = mutableListOf<String>()
-        var featureName: String? = null
+        var featureName = ""
         val featureTags = mutableListOf<String>()
-        val scenarios   = mutableListOf<ScenarioInfo>()
+        var pending     = mutableListOf<String>()
+        val scenarios   = mutableListOf<ScenarioItem>()
 
-        for (line in lines) {
-            val t = line.trim()
+        for ((idx, raw) in lines.withIndex()) {
+            val line = raw.trim()
             when {
-                t.startsWith("@") -> {
-                    t.split("\\s+".toRegex()).filter { it.startsWith("@") }.forEach { pendingTags += it.drop(1) }
+                line.startsWith("@") -> {
+                    line.split("\\s+".toRegex()).filter { it.startsWith("@") }
+                        .forEach { pending += it.drop(1) }
                 }
-                t.startsWith("Feature:") -> {
-                    featureName = t.removePrefix("Feature:").trim()
-                    featureTags += pendingTags
-                    pendingTags = mutableListOf()
+                line.startsWith("Feature:") -> {
+                    featureName = line.removePrefix("Feature:").trim()
+                    featureTags += pending; pending = mutableListOf()
                 }
-                t.startsWith("Scenario Outline:") || t.startsWith("Scenario Template:") -> {
-                    val scTags   = pendingTags.toList()
-                    val isIgnore = scTags.any { it.equals("ignore", ignoreCase = true) }
-                    val rawName  = t.removePrefix("Scenario Template:").removePrefix("Scenario Outline:").trim()
-                    scenarios += ScenarioInfo(rawName, lines.indexOf(line) + 1, scTags, isIgnore, isOutline = true)
-                    pendingTags = mutableListOf()
+                line.startsWith("Scenario Outline:") || line.startsWith("Scenario Template:") -> {
+                    val tags = pending.toList(); pending = mutableListOf()
+                    val name = line.removePrefix("Scenario Template:").removePrefix("Scenario Outline:").trim()
+                    scenarios += ScenarioItem(name, idx + 1, tags, tags.any { it.equals("ignore", true) }, isOutline = true)
                 }
-                t.startsWith("Scenario:") -> {
-                    val scTags   = pendingTags.toList()
-                    val isIgnore = scTags.any { it.equals("ignore", ignoreCase = true) }
-                    val rawName  = t.removePrefix("Scenario:").trim()
-                    scenarios += ScenarioInfo(rawName, lines.indexOf(line) + 1, scTags, isIgnore, isOutline = false)
-                    pendingTags = mutableListOf()
+                line.startsWith("Scenario:") || line.startsWith("Example:") -> {
+                    val tags = pending.toList(); pending = mutableListOf()
+                    val name = line.removePrefix("Scenario:").removePrefix("Example:").trim()
+                    scenarios += ScenarioItem(name, idx + 1, tags, tags.any { it.equals("ignore", true) }, isOutline = false)
                 }
-                t.isNotBlank() && !t.startsWith("#") && !t.startsWith("Background:") -> {
-                    // Non-tag, non-keyword line resets pending tags only if we haven't seen Feature yet
-                    if (featureName == null) pendingTags = mutableListOf()
+                line.isNotBlank() && !line.startsWith("#") && !line.startsWith("|") && featureName.isEmpty() -> {
+                    pending = mutableListOf()
                 }
             }
         }
-
-        return FeatureInfo(featureName ?: file.nameWithoutExtension, file, featureTags, scenarios)
+        if (featureName.isEmpty()) return null
+        return FeatureItem(uri = vf.path, fsPath = vf.path, name = featureName, tags = featureTags, scenarios = scenarios)
     }
 
-    private fun onDoubleClick(e: MouseEvent) {
-        val node = selectedNode(e) ?: return
-        when (val data = node.userObject) {
-            is ScenarioNode -> OpenFileDescriptor(project, data.file, data.line - 1, 0).navigate(true)
-            is FeatureNode  -> OpenFileDescriptor(project, data.file, 0, 0).navigate(true)
-            else            -> {}
-        }
+    private fun dispatchJs(js: String) {
+        val b = browser ?: return
+        b.cefBrowser.executeJavaScript(js, b.cefBrowser.url ?: "about:blank", 0)
     }
 
-    private fun showPopup(e: MouseEvent) {
-        val node     = selectedNode(e) ?: return
-        val menu     = JPopupMenu()
-        val producer = ZioBddRunConfigurationProducer()
-        when (val data = node.userObject) {
-            is SuiteNode -> {
-                menu.add(JMenuItem("Run Suite: ${data.name}").apply {
-                    addActionListener { producer.runSuite(project, data.selector, data.name) }
-                })
-            }
-            is FeatureNode -> {
-                menu.add(JMenuItem("Run Feature: ${data.name}").apply {
-                    addActionListener { producer.runFeature(project, data.file, data.name, data.suiteSelector) }
-                })
-                menu.add(JMenuItem("Open in Editor").apply {
-                    addActionListener { OpenFileDescriptor(project, data.file, 0, 0).navigate(true) }
-                })
-            }
-            is ScenarioNode -> {
-                menu.add(JMenuItem("Run Scenario: ${data.name}").apply {
-                    addActionListener { producer.runScenario(project, data.name, data.file, data.suiteSelector) }
-                })
-                menu.add(JMenuItem("Go to Scenario").apply {
-                    addActionListener { OpenFileDescriptor(project, data.file, data.line - 1, 0).navigate(true) }
-                })
-            }
-        }
-        if (menu.componentCount > 0) menu.show(tree, e.x, e.y)
-    }
+    private fun runOnEdt(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
 
-    private fun selectedNode(e: MouseEvent): DefaultMutableTreeNode? {
-        val path = tree.getPathForLocation(e.x, e.y) ?: return null
-        tree.selectionPath = path
-        return path.lastPathComponent as? DefaultMutableTreeNode
-    }
-}
-
-// ── Cell renderer ─────────────────────────────────────────────────────────────
-
-private class ExplorerCellRenderer : DefaultTreeCellRenderer() {
-    override fun getTreeCellRendererComponent(
-        tree: javax.swing.JTree,
-        value: Any?,
-        selected: Boolean,
-        expanded: Boolean,
-        leaf: Boolean,
-        row: Int,
-        hasFocus: Boolean,
-    ): Component {
-        super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus)
-        val node = value as? DefaultMutableTreeNode ?: return this
-        when (val data = node.userObject) {
-            is SuiteNode -> {
-                icon = AllIcons.Nodes.ModuleGroup
-                text = data.name
-            }
-            is FeatureNode -> {
-                icon = AllIcons.FileTypes.Text
-                text = buildString {
-                    append(data.name)
-                    if (data.tags.isNotEmpty()) append("  [${data.tags.joinToString(", ") { "@$it" }}]")
-                }
-            }
-            is ScenarioNode -> {
-                icon = if (data.isIgnored) AllIcons.Actions.Suspend else AllIcons.Actions.Execute
-                text = buildString {
-                    append(data.name)
-                    if (data.isOutline) append(" (outline)")
-                    if (data.isIgnored) append(" [ignored]")
-                    if (data.tags.isNotEmpty()) append("  ${data.tags.joinToString(" ") { "@$it" }}")
-                }
-                foreground = if (data.isIgnored) JBColor.GRAY else foreground
-            }
-        }
-        return this
-    }
+    override fun dispose() { browser?.dispose() }
 }
