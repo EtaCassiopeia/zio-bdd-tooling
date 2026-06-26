@@ -83,7 +83,7 @@
                 implementationClass="zio.bdd.intellij.lang.ZioBddDocumentationProvider"/>
 
         <!-- ── Scenario Explorer tool window ─────────────────────────────── -->
-        <toolWindow id="zio-bdd"
+        <toolWindow id="Scenario Explorer"
                     anchor="left"
                     factoryClass="zio.bdd.intellij.toolwindow.ZioBddScenarioExplorerFactory"
                     icon="/icons/feature.svg"/>
