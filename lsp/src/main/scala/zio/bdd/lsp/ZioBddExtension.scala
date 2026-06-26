@@ -17,3 +17,14 @@ trait ZioBddExtension:
    */
   @JsonRequest("zio-bdd/buildRunCommand")
   def buildRunCommand(params: com.google.gson.JsonObject): CompletableFuture[String]
+
+  /** Returns a JSON array of `{ suiteName, scalaFile, featurePaths }` objects
+   *  mapping each indexed suite to the feature files whose steps it covers.
+   *  Used by the Scenario Explorer sidebar to group features by owning suite.
+   *
+   *  Request: `zio-bdd/suiteFeatureMap`
+   *  Params:  `{}` (unused)
+   *  Returns: JSON string — `[{ "suiteName": "…", "scalaFile": "…", "featurePaths": ["…"] }]`
+   */
+  @JsonRequest("zio-bdd/suiteFeatureMap")
+  def suiteFeatureMap(params: com.google.gson.JsonObject): CompletableFuture[String]

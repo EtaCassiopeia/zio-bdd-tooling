@@ -333,6 +333,23 @@ final class ZIOBddServer(
 
   // ── ZioBddExtension ──────────────────────────────────────────────────────
 
+  override def suiteFeatureMap(params: com.google.gson.JsonObject): CompletableFuture[String] =
+    dispatchGated(
+      index.suiteFeatureMap().map { entries =>
+        val arr = new com.google.gson.JsonArray()
+        entries.foreach { (scalaFile, featurePaths) =>
+          val obj = new com.google.gson.JsonObject()
+          obj.addProperty("suiteName", java.nio.file.Paths.get(scalaFile).getFileName.toString.stripSuffix(".scala"))
+          obj.addProperty("scalaFile", scalaFile)
+          val featArr = new com.google.gson.JsonArray()
+          featurePaths.foreach(featArr.add)
+          obj.add("featurePaths", featArr)
+          arr.add(obj)
+        }
+        arr.toString
+      }
+    )
+
   override def buildRunCommand(params: com.google.gson.JsonObject): CompletableFuture[String] =
     val featureUri   = params.get("featureUri").getAsString
     val scenarioName = Option(params.get("scenarioName")).filterNot(_.isJsonNull).map(_.getAsString)

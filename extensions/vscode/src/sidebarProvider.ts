@@ -21,17 +21,25 @@ interface LspClient {
   sendRequest<T>(method: string, params: unknown): Promise<T>;
 }
 
+interface SuiteGroup {
+  suiteName: string;
+  scalaFile: string;
+  featurePaths: string[];
+}
+
 export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'zioBdd.scenarioExplorer';
   private _view?: vscode.WebviewView;
   private _features: FeatureItem[] = [];
+  private _suiteGroups: SuiteGroup[] = [];
   private _lspClient?: LspClient;
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
-  /** Inject the LSP client once it has started. */
+  /** Inject the LSP client once it has started, then immediately load suite groupings. */
   public setLspClient(client: LspClient): void {
     this._lspClient = client;
+    void this._loadSuiteGroups();
   }
 
   public resolveWebviewView(
@@ -60,7 +68,10 @@ export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
         case 'runScenario': {
           const featureUri   = msg.featureUri as string;
           const scenarioName = msg.scenarioName as string;
-          const sbtCmd = await this._resolveSbtCommand(featureUri, scenarioName);
+          const suiteName    = msg.suiteName as string | undefined;
+          const sbtCmd = suiteName
+            ? this._buildCommandWithSuite(suiteName, featureUri, scenarioName)
+            : await this._resolveSbtCommand(featureUri, scenarioName);
           const term = vscode.window.createTerminal('zio-bdd');
           term.show();
           term.sendText(sbtCmd);
@@ -68,10 +79,22 @@ export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
         }
         case 'runFeature': {
           const featureUri = msg.featureUri as string;
-          const sbtCmd = await this._resolveSbtCommand(featureUri, null);
+          const suiteName  = msg.suiteName as string | undefined;
+          const sbtCmd = suiteName
+            ? this._buildCommandWithSuite(suiteName, featureUri, null)
+            : await this._resolveSbtCommand(featureUri, null);
           const term = vscode.window.createTerminal('zio-bdd');
           term.show();
           term.sendText(sbtCmd);
+          break;
+        }
+        case 'runSuite': {
+          const suiteName = msg.suiteName as string;
+          const conf = vscode.workspace.getConfiguration('zio-bdd');
+          const sbt  = conf.get<string>('sbtCommand') ?? 'sbt';
+          const term = vscode.window.createTerminal('zio-bdd');
+          term.show();
+          term.sendText(`${sbt} "testOnly *${suiteName}*"`);
           break;
         }
         case 'runAll': {
@@ -94,7 +117,30 @@ export class ScenarioExplorerProvider implements vscode.WebviewViewProvider {
 
   public async refresh(): Promise<void> {
     this._features = await this._scan();
-    this._post({ type: 'update', features: this._features });
+    await this._loadSuiteGroups();
+    this._post({ type: 'update', features: this._features, suiteGroups: this._suiteGroups });
+  }
+
+  private async _loadSuiteGroups(): Promise<void> {
+    if (!this._lspClient) return;
+    try {
+      const json = await this._lspClient.sendRequest<string>('zio-bdd/suiteFeatureMap', {});
+      this._suiteGroups = JSON.parse(json) as SuiteGroup[];
+    } catch {
+      this._suiteGroups = [];
+    }
+    this._post({ type: 'update', features: this._features, suiteGroups: this._suiteGroups });
+  }
+
+  private _buildCommandWithSuite(suiteName: string, featureUri: string, scenarioName: string | null): string {
+    const conf   = vscode.workspace.getConfiguration('zio-bdd');
+    const sbt    = conf.get<string>('sbtCommand') ?? 'sbt';
+    const fsPath = vscode.Uri.parse(featureUri).fsPath;
+    const dq     = (s: string) => `\\"${s.replace(/"/g, '\\"')}\\"`;
+    const flags  = scenarioName
+      ? `--feature-file ${dq(fsPath)} --scenario-name ${dq(scenarioName)} --focused`
+      : `--feature-file ${dq(fsPath)}`;
+    return `${sbt} "testOnly *${suiteName}* -- ${flags}"`;
   }
 
   private _post(msg: object): void {
@@ -450,6 +496,63 @@ body {
 }
 .sc-run:hover { background: #1f6feb33; }
 
+/* ── suite groups ────────────────────────────────────────────────────────── */
+.suite-section { margin-bottom: 1px; }
+
+.suite-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  border-left: 2px solid #238636;
+  cursor: pointer;
+  user-select: none;
+  position: sticky;
+  top: 67px;
+  z-index: 8;
+}
+.suite-header:hover { background: #1c2128; }
+.suite-header:hover .suite-run { opacity: 1; }
+.suite-header.unassigned { border-left-color: #4d555e; }
+
+.suite-name {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: #e6edf3;
+  letter-spacing: .03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suite-badge {
+  font-size: 9px;
+  color: #6e7681;
+  background: #21262d;
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.suite-run {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: #3fb950;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: opacity .12s;
+  flex-shrink: 0;
+}
+.suite-run:hover { background: #23863622; }
+
+.view-toggle-btn.suite-active { color: #3fb950; }
+
 .empty {
   padding: 32px 16px; text-align: center;
   color: #6e7681; font-size: 11px; line-height: 1.8;
@@ -467,6 +570,7 @@ body {
   <span class="logo">◈</span>
   <span class="header-title">Scenario Explorer</span>
   <button class="icon-btn" id="refresh-btn" title="Refresh">↻</button>
+  <button class="icon-btn view-toggle-btn" id="view-toggle-btn" title="Toggle suite / feature view">⊞</button>
   <button class="icon-btn" id="filter-btn" title="Filter by tag">
     <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
       <path d="M2 3.5A.5.5 0 0 1 2.5 3h11a.5.5 0 0 1 .354.854L9.5 8.207V13.5a.5.5 0 0 1-.724.447l-3-1.5A.5.5 0 0 1 5.5 12V8.207L2.146 3.854A.5.5 0 0 1 2 3.5z"/>
@@ -487,8 +591,11 @@ body {
 
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-let features  = [];
-let collapsed = new Set(); // stores feature URIs
+let features     = [];
+let suiteGroups  = []; // [{ suiteName, scalaFile, featurePaths }]
+let collapsed    = new Set(); // stores feature URIs
+let collSuites   = new Set(); // stores suite names that are collapsed
+let viewBySuite  = true;      // false = flat feature list
 
 // ── filter state ──────────────────────────────────────────────────────────
 let includeTags    = new Set();
@@ -505,7 +612,11 @@ const statsEl     = document.getElementById('stats');
 // ── message bus ───────────────────────────────────────────────────────────
 window.addEventListener('message', e => {
   const msg = e.data;
-  if (msg.type === 'update') { features = msg.features; render(); }
+  if (msg.type === 'update') {
+    features = msg.features;
+    if (Array.isArray(msg.suiteGroups)) suiteGroups = msg.suiteGroups;
+    render();
+  }
 });
 
 // ── toolbar ───────────────────────────────────────────────────────────────
@@ -514,6 +625,12 @@ document.getElementById('refresh-btn').addEventListener('click', () =>
 
 document.getElementById('run-all-btn').addEventListener('click', () =>
   vscode.postMessage({ type: 'runAll' }));
+
+document.getElementById('view-toggle-btn').addEventListener('click', () => {
+  viewBySuite = !viewBySuite;
+  document.getElementById('view-toggle-btn').classList.toggle('suite-active', viewBySuite && suiteGroups.length > 0);
+  render();
+});
 
 // Filter button: toggle bar open; if just opened and no chips exist, open dropdown
 filterBtn.addEventListener('click', () => {
@@ -565,6 +682,23 @@ featRoot.addEventListener('click', e => {
     return;
   }
 
+  // Suite run
+  const suiteRun = e.target.closest('[data-suite-run]');
+  if (suiteRun) {
+    e.stopPropagation();
+    vscode.postMessage({ type: 'runSuite', suiteName: suiteRun.dataset.suiteRun });
+    return;
+  }
+
+  // Suite toggle (collapse/expand)
+  const suiteHdr = e.target.closest('[data-suite-hdr]');
+  if (suiteHdr) {
+    const name = suiteHdr.dataset.suiteHdr;
+    if (collSuites.has(name)) collSuites.delete(name); else collSuites.add(name);
+    render();
+    return;
+  }
+
   // Toggle feature
   const featHdr = e.target.closest('[data-feat-uri]');
   if (featHdr && !e.target.closest('[data-feat-run]') && !e.target.closest('[data-filter-tag]')) {
@@ -579,7 +713,8 @@ featRoot.addEventListener('click', e => {
   if (featRun) {
     e.stopPropagation();
     const hdr = featRun.closest('[data-feat-uri]');
-    vscode.postMessage({ type: 'runFeature', featureUri: hdr?.dataset.featUri ?? '', fsPath: featRun.dataset.featRun });
+    const suite = featRun.dataset.featSuite || undefined;
+    vscode.postMessage({ type: 'runFeature', featureUri: hdr?.dataset.featUri ?? '', fsPath: featRun.dataset.featRun, suiteName: suite });
     return;
   }
 
@@ -587,7 +722,8 @@ featRoot.addEventListener('click', e => {
   const scRun = e.target.closest('[data-sc-run]');
   if (scRun) {
     e.stopPropagation();
-    vscode.postMessage({ type: 'runScenario', scenarioName: scRun.dataset.scRun, featureUri: scRun.dataset.featUri ?? '' });
+    const suite = scRun.dataset.scSuite || undefined;
+    vscode.postMessage({ type: 'runScenario', scenarioName: scRun.dataset.scRun, featureUri: scRun.dataset.featUri ?? '', suiteName: suite });
     return;
   }
 
@@ -741,7 +877,101 @@ function render() {
     return;
   }
 
-  featRoot.innerHTML = visible.map(renderFeature).join('');
+  const showSuites = viewBySuite && suiteGroups.length > 0;
+  document.getElementById('view-toggle-btn').classList.toggle('suite-active', showSuites);
+  if (showSuites) {
+    renderBySuite(visible);
+  } else {
+    featRoot.innerHTML = visible.map(renderFeature).join('');
+  }
+}
+
+function renderBySuite(visible) {
+  const byPath = {};
+  visible.forEach(f => { byPath[f.fsPath] = f; });
+  const assigned = new Set();
+  let html = '';
+
+  for (const group of suiteGroups) {
+    const groupFeats = group.featurePaths.map(p => byPath[p]).filter(Boolean);
+    if (groupFeats.length === 0) continue;
+    groupFeats.forEach(f => assigned.add(f.uri));
+    const open = !collSuites.has(group.suiteName);
+    const scenCount = groupFeats.reduce((n, f) => n + f.scenarios.length, 0);
+    const body = open ? groupFeats.map(f => renderFeatureInSuite(f, group.suiteName)).join('') : '';
+    html +=
+      '<div class="suite-section">' +
+        '<div class="suite-header" data-suite-hdr="' + esc(group.suiteName) + '">' +
+          '<span class="chevron">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="suite-name">' + esc(group.suiteName) + '</span>' +
+          '<span class="suite-badge">' + groupFeats.length + (groupFeats.length === 1 ? ' feature · ' : ' features · ') + scenCount + ' scenarios</span>' +
+          '<button class="suite-run" data-suite-run="' + esc(group.suiteName) + '" title="Run ' + esc(group.suiteName) + '">▶</button>' +
+        '</div>' +
+        '<div>' + body + '</div>' +
+      '</div>';
+  }
+
+  const unassigned = visible.filter(f => !assigned.has(f.uri));
+  if (unassigned.length > 0) {
+    const open = !collSuites.has('__unassigned__');
+    const body = open ? unassigned.map(f => renderFeature(f)).join('') : '';
+    html +=
+      '<div class="suite-section">' +
+        '<div class="suite-header unassigned" data-suite-hdr="__unassigned__">' +
+          '<span class="chevron">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="suite-name">Unassigned</span>' +
+          '<span class="suite-badge">' + unassigned.length + (unassigned.length === 1 ? ' feature' : ' features') + '</span>' +
+        '</div>' +
+        '<div>' + body + '</div>' +
+      '</div>';
+  }
+
+  featRoot.innerHTML = html || '<div class="empty">No features indexed yet — wait for the LSP scan to complete.</div>';
+}
+
+function renderFeatureInSuite(f, suiteName) {
+  const open     = !collapsed.has(f.uri);
+  const featTags = f.tags.map(t =>
+    '<span class="tag t-feature" data-filter-tag="' + esc(t) + '" title="Filter by @' + esc(t) + '">' + esc(t) + '</span>'
+  ).join('');
+  const body = open ? f.scenarios.map(s => renderScenarioInSuite(s, f.uri, suiteName)).join('') : '';
+
+  return (
+    '<div class="feature-section">' +
+    '<div class="feature-header" data-feat-uri="' + esc(f.uri) + '" title="' + esc(f.fsPath) + '">' +
+      '<span class="chevron">' + (open ? '▾' : '▸') + '</span>' +
+      '<span class="feat-name">' + esc(f.name) + '</span>' +
+      '<div class="feat-tags">' + featTags + '</div>' +
+      '<span class="feat-count">' + f.scenarios.length + '</span>' +
+      '<button class="feat-run" data-feat-run="' + esc(f.fsPath) + '" data-feat-suite="' + esc(suiteName) + '" title="Run feature">▶</button>' +
+    '</div>' +
+    '<div class="feature-body">' + body + '</div>' +
+    '</div>'
+  );
+}
+
+function renderScenarioInSuite(s, featureUri, suiteName) {
+  const ignored = s.isIgnored;
+  const dotCls  = ignored ? 'dot-ignored'
+                : s.tags.some(t => /^property/i.test(t)) ? 'dot-property'
+                : s.isOutline ? 'dot-outline'
+                : 'dot-active';
+  const nameCls = 'sc-name' + (ignored ? ' ignored' : '');
+  const outline = s.isOutline ? '<span class="outline-pill">OUTLINE</span>' : '';
+  const tags = s.tags
+    .map(t => '<span class="tag ' + tagCls(t) + '" data-filter-tag="' + esc(t) + '" title="Filter by @' + esc(t) + '">' + esc(t) + '</span>')
+    .join('');
+
+  return (
+    '<div class="scenario-row" data-uri="' + esc(featureUri) + '" data-line="' + s.line + '">' +
+      '<div class="dot ' + dotCls + '"></div>' +
+      '<div class="sc-info">' +
+        '<div class="' + nameCls + '">' + esc(s.name) + outline + '</div>' +
+        (tags ? '<div class="tag-row">' + tags + '</div>' : '') +
+      '</div>' +
+      (ignored ? '' : '<button class="sc-run" data-sc-run="' + esc(s.name) + '" data-feat-uri="' + esc(featureUri) + '" data-sc-suite="' + esc(suiteName) + '" title="Run scenario">▶</button>') +
+    '</div>'
+  );
 }
 
 function chip(color, label) {

@@ -39,36 +39,43 @@ final class WorkspaceIndex private (
   def findStep(keyword: String, text: String): UIO[StepMatcher.MatchResult] =
     allSteps.map(StepMatcher.find(keyword, text, _))
 
-  // Returns the Scala source file paths whose step definitions match at least
-  // one step in the given feature file.  Used to narrow the sbt test selector
-  // (e.g. `testOnly *CalculatorSuite*`) so "Run feature / Run scenario" only
-  // executes the relevant suite and suppresses noise from unrelated suites.
   def suiteFilesForFeature(featurePath: String): UIO[List[String]] =
     for
       featureMap <- featuresRef.get
       stepMap    <- stepsRef.get
     yield featureMap.get(featurePath).fold(List.empty[String]) { feature =>
-      val featureSteps = feature.scenarios.flatMap(_.steps).map { step =>
-        val kw = step.stepType match
-          case StepType.GivenStep => "Given"
-          case StepType.WhenStep  => "When"
-          case StepType.ThenStep  => "Then"
-          case StepType.ButStep   => "But"
-          case StepType.AndStep   => "And"
-        (kw, step.pattern)
-      }
-      if featureSteps.isEmpty then Nil
+      stepMap.collect {
+        case (scalaFile, defs) if defs.nonEmpty && featureMatchesDefs(feature, defs) => scalaFile
+      }.toList
+    }
+
+  // Returns a mapping of Scala suite file → feature file paths for every suite
+  // that has at least one matching step definition.  Used by the sidebar to
+  // group features under the suite that owns them.
+  def suiteFeatureMap(): UIO[List[(String, List[String])]] =
+    for
+      featureMap <- featuresRef.get
+      stepMap    <- stepsRef.get
+    yield stepMap.toList.flatMap { (scalaFile, defs) =>
+      if defs.isEmpty then None
       else
-        stepMap.collect {
-          case (scalaFile, defs) if
-            defs.nonEmpty &&
-            featureSteps.exists { (kw, text) =>
-              StepMatcher.find(kw, text, defs) match
-                case StepMatcher.MatchResult.Matched(_) => true
-                case _                                  => false
-            }
-          => scalaFile
-        }.toList
+        val matched = featureMap.keys.filter { featurePath =>
+          featureMap.get(featurePath).exists(featureMatchesDefs(_, defs))
+        }.toList.sorted
+        if matched.isEmpty then None else Some(scalaFile -> matched)
+    }
+
+  private def featureMatchesDefs(feature: Feature, defs: List[StepDefinition]): Boolean =
+    feature.scenarios.flatMap(_.steps).exists { step =>
+      val kw = step.stepType match
+        case StepType.GivenStep => "Given"
+        case StepType.WhenStep  => "When"
+        case StepType.ThenStep  => "Then"
+        case StepType.ButStep   => "But"
+        case StepType.AndStep   => "And"
+      StepMatcher.find(kw, step.pattern, defs) match
+        case StepMatcher.MatchResult.Matched(_) => true
+        case _                                  => false
     }
 
   // Walk source roots and index every .scala / .feature file in parallel.
