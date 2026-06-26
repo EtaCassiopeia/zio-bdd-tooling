@@ -51,7 +51,11 @@ export function activate(context: vscode.ExtensionContext): void {
     documentSelector: [
       { scheme: 'file', language: 'gherkin' },
       { scheme: 'file', pattern: '**/*.feature' },
+      // 'language: scala' only matches when Metals is installed and has registered the
+      // scala language ID. The pattern fallback ensures the LSP attaches to .scala files
+      // even in vanilla VS Code without any Scala extension.
       { scheme: 'file', language: 'scala' },
+      { scheme: 'file', pattern: '**/*.scala' },
     ],
     outputChannel,
     synchronize: {
