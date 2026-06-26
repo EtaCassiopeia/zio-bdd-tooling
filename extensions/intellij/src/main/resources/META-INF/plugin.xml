@@ -90,4 +90,14 @@
 
     </extensions>
 
+    <actions>
+        <action id="zio.bdd.FindStepUsages"
+                class="zio.bdd.intellij.lang.ZioBddFindStepUsagesAction"
+                text="Find Step Usages"
+                description="Find all feature file steps that share this step definition">
+            <add-to-group group-id="EditorPopupMenu" anchor="after" relative-to-action="GotoDeclaration"/>
+        </action>
+    </actions>
+
+
 </idea-plugin>

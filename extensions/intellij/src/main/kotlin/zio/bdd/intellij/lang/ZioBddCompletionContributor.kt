@@ -51,9 +51,6 @@ class ZioBddCompletionContributor : CompletionContributor() {
         }
 
         private fun candidatesFor(keyword: String, defs: List<KtStepDefinition>): List<KtStepDefinition> =
-            when (keyword) {
-                "And", "But" -> defs
-                else -> defs.filter { it.keyword == keyword || it.keyword == "And" || it.keyword == "But" }
-            }
+            ZioBddStepMatcher.candidatesFor(keyword, defs)
     }
 }

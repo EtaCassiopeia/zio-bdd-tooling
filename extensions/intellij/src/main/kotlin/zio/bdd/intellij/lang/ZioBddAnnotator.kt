@@ -9,8 +9,6 @@ import zio.bdd.intellij.lang.psi.ZioBddStep
 
 class ZioBddAnnotator : Annotator {
 
-    private val colPlaceholder = Regex("""\<(\w+)\>""")
-
     override fun annotate(element: PsiElement, holder: AnnotationHolder) {
         if (element !is ZioBddStep) return
         if (DumbService.isDumb(element.project)) return
@@ -22,8 +20,8 @@ class ZioBddAnnotator : Annotator {
         val defs = ZioBddStepCache.getInstance(element.project).getStepDefinitions()
         if (defs.isEmpty()) return  // cache not warmed yet — no false positives
 
-        val candidates = candidatesFor(keyword, defs)
-        if (candidates.any { matchesStep(stepText, it) }) return
+        val candidates = ZioBddStepMatcher.candidatesFor(keyword, defs)
+        if (candidates.any { ZioBddStepMatcher.matchesStep(stepText, it) }) return
 
         val hint    = closestMatch(stepText, defs)
         val message = if (hint != null)
@@ -36,26 +34,6 @@ class ZioBddAnnotator : Annotator {
             .withFix(ZioBddGenerateStepFix(keyword, stepText))
             .create()
     }
-
-    private fun matchesStep(text: String, def: KtStepDefinition): Boolean =
-        if (colPlaceholder.containsMatchIn(text)) structuralMatch(text, def)
-        else try { Regex(def.pattern).matches(text) } catch (_: Exception) { false }
-
-    private fun structuralMatch(template: String, def: KtStepDefinition): Boolean {
-        val lits = mutableListOf<String>(); var pos = 0; var count = 0
-        colPlaceholder.findAll(template).forEach { m ->
-            if (m.range.first > pos) lits += template.substring(pos, m.range.first)
-            count++; pos = m.range.last + 1
-        }
-        if (pos < template.length) lits += template.substring(pos)
-        return lits == def.literals && count == def.extractorCount
-    }
-
-    private fun candidatesFor(keyword: String, defs: List<KtStepDefinition>): List<KtStepDefinition> =
-        when (keyword) {
-            "And", "But" -> defs
-            else -> defs.filter { it.keyword == keyword || it.keyword == "And" || it.keyword == "But" }
-        }
 
     private fun closestMatch(text: String, defs: List<KtStepDefinition>): KtStepDefinition? {
         if (defs.isEmpty()) return null

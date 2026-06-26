@@ -12,34 +12,37 @@ import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.ui.DocumentAdapter
+import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
 import zio.bdd.intellij.execution.ZioBddRunConfigurationProducer
 import zio.bdd.intellij.lang.ZioBddStepCache
+import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.JMenuItem
+import javax.swing.JPanel
 import javax.swing.JPopupMenu
+import javax.swing.event.DocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
 
-// ── Node types stored in DefaultMutableTreeNode.userObject ──────────────────
+// ── Node types ───────────────────────────────────────────────────────────────
 
 data class SuiteNode(val name: String, val selector: String)
 data class FeatureNode(val name: String, val file: VirtualFile, val suiteSelector: String)
 data class ScenarioNode(val name: String, val line: Int, val file: VirtualFile, val suiteSelector: String)
 
-// ── Intermediate data only used during tree build ──────────────────────────
-
 private data class FeatureInfo(
     val name: String,
     val file: VirtualFile,
-    val scenarios: List<Pair<String, Int>>, // name → 1-based line
+    val scenarios: List<Pair<String, Int>>, // name → 1-based line number
 )
 
-// ── Factory (registered in plugin.xml) ──────────────────────────────────────
+// ── Factory ──────────────────────────────────────────────────────────────────
 
 class ZioBddScenarioExplorerFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -49,23 +52,32 @@ class ZioBddScenarioExplorerFactory : ToolWindowFactory {
     }
 }
 
-// ── Panel ────────────────────────────────────────────────────────────────────
+// ── Panel ─────────────────────────────────────────────────────────────────────
 
 class ZioBddScenarioExplorerPanel(private val project: Project) : SimpleToolWindowPanel(true, true) {
 
-    private val root  = DefaultMutableTreeNode("root")
-    private val model = DefaultTreeModel(root)
-    private val tree  = Tree(model)
+    private val root        = DefaultMutableTreeNode("root")
+    private val model       = DefaultTreeModel(root)
+    private val tree        = Tree(model)
+    private val searchField = SearchTextField(false)
+
+    // Cached full set of groups — rebuilt on refresh, filtered on every keystroke
+    @Volatile private var allGroups: List<Pair<SuiteNode, List<FeatureInfo>>> = emptyList()
 
     init {
-        tree.isRootVisible  = false
+        tree.isRootVisible    = false
         tree.showsRootHandles = true
-        tree.cellRenderer   = ExplorerCellRenderer()
+        tree.cellRenderer     = ExplorerCellRenderer()
 
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent)  { if (e.clickCount >= 2) onDoubleClick(e) }
             override fun mousePressed(e: MouseEvent)  { if (e.isPopupTrigger) showPopup(e) }
             override fun mouseReleased(e: MouseEvent) { if (e.isPopupTrigger) showPopup(e) }
+        })
+
+        searchField.textEditor.emptyText.text = "Filter features & scenarios…"
+        searchField.addDocumentListener(object : DocumentAdapter() {
+            override fun textChanged(e: DocumentEvent) { applyFilter() }
         })
 
         val group = DefaultActionGroup()
@@ -74,23 +86,44 @@ class ZioBddScenarioExplorerPanel(private val project: Project) : SimpleToolWind
         })
         val toolbar = ActionManager.getInstance().createActionToolbar("ZioBddExplorer", group, true)
         toolbar.targetComponent = tree
-        setToolbar(toolbar.component)
+
+        val topBar = JPanel(BorderLayout()).apply {
+            add(toolbar.component, BorderLayout.WEST)
+            add(searchField,       BorderLayout.CENTER)
+        }
+        setToolbar(topBar)
         setContent(JBScrollPane(tree))
 
         triggerRefresh()
     }
 
     fun triggerRefresh() {
-        ApplicationManager.getApplication().executeOnPooledThread { rebuild() }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val groups = buildGroups()
+            ApplicationManager.getApplication().invokeLater {
+                allGroups = groups
+                applyFilter()
+            }
+        }
     }
 
-    private fun rebuild() {
-        val groups = buildGroups()
-        ApplicationManager.getApplication().invokeLater {
-            root.removeAllChildren()
-            groups.forEach { (suiteNode, features) ->
+    private fun applyFilter() {
+        val text = searchField.text.trim().lowercase()
+        root.removeAllChildren()
+        allGroups.forEach { (suiteNode, features) ->
+            val filtered = features.mapNotNull { fi ->
+                val nameHit = fi.name.lowercase().contains(text)
+                val matchedScenarios = fi.scenarios.filter { (s, _) -> s.lowercase().contains(text) }
+                when {
+                    text.isEmpty()                  -> fi
+                    nameHit                         -> fi
+                    matchedScenarios.isNotEmpty()   -> fi.copy(scenarios = matchedScenarios)
+                    else                            -> null
+                }
+            }
+            if (filtered.isNotEmpty()) {
                 val stn = DefaultMutableTreeNode(suiteNode)
-                features.forEach { fi ->
+                filtered.forEach { fi ->
                     val fn = DefaultMutableTreeNode(FeatureNode(fi.name, fi.file, suiteNode.selector))
                     fi.scenarios.forEach { (sName, sLine) ->
                         fn.add(DefaultMutableTreeNode(ScenarioNode(sName, sLine, fi.file, suiteNode.selector)))
@@ -99,16 +132,16 @@ class ZioBddScenarioExplorerPanel(private val project: Project) : SimpleToolWind
                 }
                 root.add(stn)
             }
-            model.reload()
-            for (i in 0 until tree.rowCount) tree.expandRow(i)
         }
+        model.reload()
+        for (i in 0 until tree.rowCount) tree.expandRow(i)
     }
 
     private fun buildGroups(): List<Pair<SuiteNode, List<FeatureInfo>>> {
         val cache    = ZioBddStepCache.getInstance(project)
         val features = cache.featureFiles().mapNotNull(::parseFeature)
 
-        val grouped: MutableMap<String, MutableList<FeatureInfo>> = mutableMapOf()
+        val grouped   = mutableMapOf<String, MutableList<FeatureInfo>>()
         val ungrouped = mutableListOf<FeatureInfo>()
 
         features.forEach { fi ->
@@ -160,8 +193,8 @@ class ZioBddScenarioExplorerPanel(private val project: Project) : SimpleToolWind
     }
 
     private fun showPopup(e: MouseEvent) {
-        val node = selectedNode(e) ?: return
-        val menu = JPopupMenu()
+        val node     = selectedNode(e) ?: return
+        val menu     = JPopupMenu()
         val producer = ZioBddRunConfigurationProducer()
         when (val data = node.userObject) {
             is SuiteNode -> {
