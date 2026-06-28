@@ -64,14 +64,71 @@ async function scanFeatureFile(
   lines.forEach((line, index) => {
     const m = SCENARIO_RE.exec(line);
     if (!m) return;
+    const keyword      = m[1];
     const scenarioName = m[2].trim();
     const id   = `${uri.toString()}::${scenarioName}`;
     const item = controller.createTestItem(id, scenarioName, uri);
     item.range = new vscode.Range(index, 0, index, line.length);
     featureItem.children.add(item);
+
+    // A Scenario Outline gets a child per Examples row so a single Example can be
+    // run on its own. The child's id carries the exact expanded name the runner
+    // uses ("<outline> - Example N"); running the outline itself still runs all rows.
+    if (keyword === 'Scenario Outline:' || keyword === 'Scenario Template:') {
+      for (const ex of exampleRows(lines, index, scenarioName)) {
+        const child = controller.createTestItem(
+          `${uri.toString()}::${ex.name}`,
+          ex.name.substring(scenarioName.length + ' - '.length), // strip "<outline> - " prefix
+          uri,
+        );
+        child.range = new vscode.Range(ex.line, 0, ex.line, lines[ex.line].length);
+        item.children.add(child);
+      }
+    }
   });
 
   controller.items.add(featureItem);
+}
+
+// Reproduces zio-bdd-gherkin's outline expansion: within each Examples block the
+// data rows (after the header row) are numbered 1-based as "<baseLabel> - Example N",
+// restarting per block, where baseLabel adds the block name for a *named* block
+// ("Examples: Happy cases"). Header-only blocks (e.g. @property) contribute nothing.
+const BLOCK_END_RE = /^(Scenario Outline:|Scenario Template:|Scenario:|Example:|Feature:|Rule:|Background:)/;
+
+function examplesBlockName(line: string): string {
+  const rest =
+    line.startsWith('Examples') ? line.slice('Examples'.length)
+    : line.startsWith('Scenarios') ? line.slice('Scenarios'.length)
+    : '';
+  return rest.trimStart().replace(/^:/, '').trim();
+}
+
+function exampleRows(
+  lines: string[],
+  outlineIndex: number,
+  outlineName: string,
+): { name: string; line: number }[] {
+  const rows: { name: string; line: number }[] = [];
+  let baseLabel = outlineName;
+  let inExamples = false;
+  let sawHeader = false;
+  let n = 0;
+  for (let i = outlineIndex + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (BLOCK_END_RE.test(t)) break;
+    if (t.startsWith('Examples') || t.startsWith('Scenarios')) {
+      const block = examplesBlockName(t);
+      baseLabel = block ? `${outlineName} - ${block}` : outlineName;
+      inExamples = true;
+      sawHeader = false;
+      n = 0;
+    } else if (inExamples && t.startsWith('|')) {
+      if (!sawHeader) sawHeader = true;
+      else rows.push({ name: `${baseLabel} - Example ${++n}`, line: i });
+    }
+  }
+  return rows;
 }
 
 async function runTests(
@@ -109,7 +166,12 @@ async function executeItem(
   let cmd: string;
   try {
     const featureUri   = item.uri?.toString();
-    const scenarioName = item.id.includes('::') ? item.label : null;
+    // The id is "<uri>::<scenario name>" for scenario/example items (the name is the
+    // exact one the runner uses, e.g. "<outline> - Example 2"), and the bare uri for
+    // a feature. Derive the name from the id, not the label, since example children
+    // display a short "Example N" label but must run by their full name.
+    const sep          = item.id.indexOf('::');
+    const scenarioName = sep >= 0 ? item.id.substring(sep + 2) : null;
     cmd = await client.sendRequest<string>('zio-bdd/buildRunCommand', { featureUri, scenarioName });
   } catch (err) {
     run.failed(item, new vscode.TestMessage(`Could not build run command from the zio-bdd LSP: ${err}`));

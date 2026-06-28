@@ -33,14 +33,14 @@ object CodeLensHandler:
             val selector = suiteSelector(suiteFiles)
             // A Scenario Outline is expanded by the parser into one Scenario per
             // Examples row, all sharing the outline's header line. Group by line so
-            // each outline yields a single "Run scenario" lens, not one per row.
-            val scenarioLenses =
+            // each outline yields a run-outline lens (all rows) plus one lens per row.
+            val scenarioLensList =
               feature.scenarios
                 .groupBy(s => toLsp(s.line))
                 .toList
                 .sortBy(_._1)
-                .map((_, group) => scenarioLens(group, path, selector))
-            featureLens(feature, path, selector) :: scenarioLenses
+                .flatMap((_, group) => scenarioLenses(group, path, selector))
+            featureLens(feature, path, selector) :: scenarioLensList
           }
 
   // Emit an "N usages" lens above each step definition in a .scala file.
@@ -69,15 +69,26 @@ object CodeLensHandler:
     new CodeLens(lineRange(line), command, null)
 
   // `group` is the set of scenarios sharing one source line: a single Scenario,
-  // or every expanded row of one Scenario Outline. For an outline we target the
-  // whole block with a `<common-prefix>*` glob (--scenario-name is matched as a
-  // case-insensitive glob), so the lens runs all rows rather than just one.
-  private def scenarioLens(group: List[Scenario], path: String, selector: String): CodeLens =
+  // or every expanded row of one Scenario Outline.
+  //   - single scenario  -> one "Run scenario" lens with its exact name.
+  //   - outline (N rows) -> a "Run outline (N examples)" lens that globs all rows
+  //     (`<common-prefix>*`, matched case-insensitively), plus one exact-name lens
+  //     per row so a single Example can be run on its own.
+  private def scenarioLenses(group: List[Scenario], path: String, selector: String): List[CodeLens] =
     val line = toLsp(group.head.line)
-    val namePattern =
-      if group.sizeIs <= 1 then group.head.name
-      else commonPrefix(group.map(_.name)) + "*"
-    val command = new Command("▶ Run scenario", "zio-bdd.runCommand")
+    if group.sizeIs <= 1 then List(scenarioLens("▶ Run scenario", group.head.name, path, selector, line))
+    else
+      val outline = scenarioLens(
+        s"▶ Run outline (${group.size} examples)",
+        commonPrefix(group.map(_.name)) + "*",
+        path,
+        selector,
+        line
+      )
+      outline :: group.map(s => scenarioLens(s"▶ Run ${exampleLabel(s.name)}", s.name, path, selector, line))
+
+  private def scenarioLens(label: String, namePattern: String, path: String, selector: String, line: Int): CodeLens =
+    val command = new Command(label, "zio-bdd.runCommand")
     command.setArguments(
       List[Object](
         buildRunCommand(
@@ -87,6 +98,11 @@ object CodeLensHandler:
       ).asJava
     )
     new CodeLens(lineRange(line), command, null)
+
+  // "Subtraction table - Example 2" -> "Example 2"; falls back to the full name.
+  private def exampleLabel(name: String): String =
+    val idx = name.lastIndexOf(" - Example ")
+    if idx >= 0 then name.substring(idx + " - ".length) else name
 
   private def commonPrefix(names: List[String]): String =
     if names.isEmpty then ""
