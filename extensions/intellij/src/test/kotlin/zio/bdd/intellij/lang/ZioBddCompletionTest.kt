@@ -23,6 +23,23 @@ class ZioBddCompletionTest : BasePlatformTestCase() {
         assertTrue("@ignore inserted in <<$text>>", text.contains("@ignore"))
     }
 
+    fun testStepCompletionOffersRegisteredSteps() {
+        myFixture.addFileToProject(
+            "CalcSteps.scala",
+            """
+            |class CalcSteps {
+            |  Given("the cart has " / int / " items") { n => () }
+            |  Given("the order is confirmed") { () }
+            |  When("the user checks out") { () }
+            |}
+            """.trimMargin(),
+        )
+        // No explicit warm — the provider must warm the cache itself on first use.
+        myFixture.configureByText("d.feature", "Feature: F\n  Scenario: S\n    Given the <caret>\n")
+        val items = myFixture.completeBasic()?.map { it.lookupString } ?: emptyList()
+        assertTrue("expected a Given step suggestion, got $items", items.any { it.contains("the cart has") })
+    }
+
     fun testStructuralKeywordCompletion() {
         myFixture.configureByText("c.feature", "Feature: F\n  <caret>\n")
         val items = myFixture.completeBasic()?.map { it.lookupString } ?: emptyList()

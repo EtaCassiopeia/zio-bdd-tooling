@@ -40,7 +40,12 @@ class ZioBddCompletionContributor : CompletionContributor() {
 
             val step    = findEnclosingStep(parameters.position) ?: return
             val keyword = step.getKeyword()
-            val defs    = ZioBddStepCache.getInstance(project).getStepDefinitions()
+            val cache   = ZioBddStepCache.getInstance(project)
+            // The cache scans Scala sources asynchronously and is empty on first
+            // access, so the first completion would show nothing. Block on a fast
+            // source-only warm (no BSP subprocess) so suggestions appear immediately.
+            cache.ensureStaticWarmed()
+            val defs    = cache.getStepDefinitions()
 
             // The lexer makes the whole step line a single token, so IntelliJ's
             // default prefix is just the word at the caret — the full step-text
