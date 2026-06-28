@@ -130,6 +130,11 @@ tasks {
     }
     withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        // Emit real Java default methods for inherited interface members instead of
+        // Kotlin override stubs. Without this, implementing a platform interface (e.g.
+        // ToolWindowFactory) makes the verifier flag its internal/deprecated default
+        // methods as "overridden" by our class even though we never touch them.
+        compilerOptions.freeCompilerArgs.add("-jvm-default=no-compatibility")
     }
 
     // We don't ship Java sources, so `instrumentCode` adds nothing and

@@ -1,7 +1,6 @@
 package zio.bdd.intellij.lang
 
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
-import com.intellij.pom.Navigatable
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
@@ -10,6 +9,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
+import com.intellij.psi.impl.FakePsiElement
 import zio.bdd.intellij.lang.psi.ZioBddStep
 
 class ZioBddGotoStepHandler : GotoDeclarationHandler {
@@ -46,14 +46,15 @@ class ZioBddGotoStepHandler : GotoDeclarationHandler {
         val targetRange  = TextRange(lineStart + col, lineStart + endCol)
 
         // Synthetic navigatable element with the exact range we want highlighted.
-        // Delegating PsiElement to `psf` gives IntelliJ a valid file reference for all
-        // other lookups; we override only range/offset/navigate so the highlight covers
-        // just the step call text (keyword through closing ')'), not the whole line.
-        val target = object : PsiElement by psf, Navigatable {
-            override fun getTextRange()         = targetRange
-            override fun getTextOffset()        = targetOffset
-            override fun getNavigationElement() = this as PsiElement
-            override fun getOriginalElement()   = this as PsiElement
+        // Parenting to `psf` gives IntelliJ a valid file reference for all other
+        // lookups; we override only range/offset/navigate so the highlight covers just
+        // the step call text (keyword through closing ')'), not the whole line.
+        // FakePsiElement supplies the rest of PsiElement (avoiding hand-delegating the
+        // whole interface, which would pull in deprecated checkAdd/checkDelete members).
+        val target = object : FakePsiElement() {
+            override fun getParent(): PsiElement = psf
+            override fun getTextRange()  = targetRange
+            override fun getTextOffset() = targetOffset
             override fun navigate(requestFocus: Boolean) =
                 OpenFileDescriptor(psf.project, vf, targetOffset).navigate(requestFocus)
             override fun canNavigate()         = true
