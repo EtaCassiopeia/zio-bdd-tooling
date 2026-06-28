@@ -107,6 +107,14 @@ object CodeLensHandler:
   // passes the quotes through as literal characters, causing paths like '/file' to fail.
   private[lsp] def shellQuote(value: String): String = "\\\"" + value + "\\\""
 
+  // --scenario-name pattern for `name`: the exact name, or a "<name>*" glob when
+  // `name` is a Scenario Outline the parser expanded into several
+  // "<name> - Example N" rows. --scenario-name is matched as a case-insensitive
+  // glob with a *full* match, so a bare outline name would match none of its rows.
+  private[lsp] def scenarioRunPattern(scenarios: List[Scenario], name: String): String =
+    val expandedRows = scenarios.count(s => s.name == name || s.name.startsWith(s"$name - "))
+    if expandedRows > 1 then s"$name*" else name
+
   private[lsp] def buildRunCommand(selector: String, flags: String): String =
     s"""sbt "testOnly $selector -- $flags""""
 

@@ -40,6 +40,14 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
   private val featureFile = "/fake/checkout.feature"
   private val featureUri  = s"file://$featureFile"
 
+  private def jsonObject(featureUri: String, scenarioName: Option[String]): com.google.gson.JsonObject =
+    val obj = new com.google.gson.JsonObject()
+    obj.addProperty("featureUri", featureUri)
+    scenarioName match
+      case Some(name) => obj.addProperty("scenarioName", name)
+      case None       => obj.add("scenarioName", com.google.gson.JsonNull.INSTANCE)
+    obj
+
   private def makeServer: ZIO[WorkspaceIndex & ZIOBddServer, Nothing, ZIOBddServer] =
     for
       index  <- ZIO.service[WorkspaceIndex]
@@ -296,6 +304,51 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
             snippets.nonEmpty,
             snippets.exists(i => Option(i.getInsertText).exists(_.contains("${1:")))
           )
+      }
+    ),
+    suite("buildRunCommand")(
+      test("targets a single scenario with an exact, sbt-quoted name and --feature-file") {
+        val doc =
+          """|Feature: Math
+             |  Scenario: Add two integers
+             |    When I add 3 and 5
+             |    Then the result should be 8
+             |""".stripMargin
+        val docUri = "file:///fake/math1.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/math1.feature", doc)
+          _      <- server.putContent(docUri, doc)
+          params  = jsonObject(docUri, Some("Add two integers"))
+          cmd    <- ZIO.fromCompletableFuture(server.buildRunCommand(params))
+        yield assertTrue(
+          cmd.contains("--feature-file \\\"/fake/math1.feature\\\""),
+          cmd.contains("--scenario-name \\\"Add two integers\\\" --focused"),
+          !cmd.contains("--scenario-name \\\"Add two integers*")
+        )
+      },
+      test("targets all rows of a scenario outline with a glob") {
+        val doc =
+          """|Feature: Math
+             |  Scenario Outline: Addition table
+             |    When I add <a> and <b>
+             |    Then the result should be <sum>
+             |
+             |    Examples:
+             |      | a | b | sum |
+             |      | 0 | 0 | 0   |
+             |      | 1 | 1 | 2   |
+             |""".stripMargin
+        val docUri = "file:///fake/math2.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/math2.feature", doc)
+          _      <- server.putContent(docUri, doc)
+          params  = jsonObject(docUri, Some("Addition table"))
+          cmd    <- ZIO.fromCompletableFuture(server.buildRunCommand(params))
+        yield assertTrue(cmd.contains("--scenario-name \\\"Addition table*\\\" --focused"))
       }
     ),
     suite("completion capabilities")(
