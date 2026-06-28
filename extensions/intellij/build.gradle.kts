@@ -30,6 +30,7 @@ dependencies {
         testFramework(TestFrameworkType.Platform)
         zipSigner()
     }
+    testImplementation("junit:junit:4.13.2")
 }
 
 intellijPlatform {

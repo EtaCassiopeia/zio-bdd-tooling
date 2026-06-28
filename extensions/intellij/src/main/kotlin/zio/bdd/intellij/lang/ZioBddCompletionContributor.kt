@@ -23,6 +23,12 @@ class ZioBddCompletionContributor : CompletionContributor() {
         extend(CompletionType.BASIC, inFeatureFile, FeatureStructureCompletionProvider)
     }
 
+    // IntelliJ only auto-opens the completion popup while typing identifier
+    // characters; "@" is not one, so tag completion never appeared on typing.
+    // Open it explicitly so "@" behaves like the LSP's "@" trigger character.
+    override fun invokeAutoPopup(position: PsiElement, typeChar: Char): Boolean =
+        typeChar == '@'
+
     private object StepCompletionProvider : CompletionProvider<CompletionParameters>() {
         override fun addCompletions(
             parameters: CompletionParameters,
