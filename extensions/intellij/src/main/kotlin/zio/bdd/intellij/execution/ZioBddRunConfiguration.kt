@@ -42,9 +42,13 @@ class ZioBddRunConfiguration(
     private fun buildCommandLine(): GeneralCommandLine {
         val sbt      = resolveSbt()
         val selector = if (suiteName.isNotBlank()) suiteName else "*"
+        // A Scenario Outline is expanded by the runner into "<name> - Example N"
+        // rows. --scenario-name is matched as a glob, so target the whole outline
+        // with a trailing "*"; a bare name would match none of its rows.
+        val namePattern = if (isOutlineScenario()) "$scenarioName*" else scenarioName
         val testCmd  = when {
             featureFilePath.isNotBlank() && scenarioName.isNotBlank() ->
-                """testOnly $selector -- --feature-file "$featureFilePath" --scenario-name "$scenarioName" --focused"""
+                """testOnly $selector -- --feature-file "$featureFilePath" --scenario-name "$namePattern" --focused"""
             featureFilePath.isNotBlank() ->
                 """testOnly $selector -- --feature-file "$featureFilePath""""
             suiteName.isNotBlank() ->
@@ -53,6 +57,22 @@ class ZioBddRunConfiguration(
                 "test"
         }
         return GeneralCommandLine(sbt, testCmd).withWorkDirectory(workingDirectory)
+    }
+
+    // True when `scenarioName` names a Scenario Outline / Template in the feature
+    // file. Read from the file so every run path (gutter, context menu, tool
+    // window) behaves the same without threading a flag through each caller.
+    private fun isOutlineScenario(): Boolean {
+        if (featureFilePath.isBlank() || scenarioName.isBlank()) return false
+        return try {
+            File(featureFilePath).readLines().any { line ->
+                val t = line.trim()
+                (t.startsWith("Scenario Outline:") || t.startsWith("Scenario Template:")) &&
+                    t.substringAfter(':').trim() == scenarioName
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun resolveSbt(): String {

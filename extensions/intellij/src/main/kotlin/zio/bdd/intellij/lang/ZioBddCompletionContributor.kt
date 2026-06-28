@@ -88,7 +88,11 @@ class ZioBddCompletionContributor : CompletionContributor() {
             val trimmed    = linePrefix.trim()
 
             if (trimmed.startsWith("@")) {
-                addTags(parameters.position.project, result)
+                // The "@" the user already typed is part of the prefix, so the
+                // lookup ("@auth") replaces it instead of doubling to "@@auth".
+                val atIndex   = linePrefix.lastIndexOf('@')
+                val tagPrefix = if (atIndex >= 0) linePrefix.substring(atIndex) else "@"
+                addTags(parameters.position.project, result.withPrefixMatcher(tagPrefix))
                 return
             }
             // Step lines are handled by StepCompletionProvider.
