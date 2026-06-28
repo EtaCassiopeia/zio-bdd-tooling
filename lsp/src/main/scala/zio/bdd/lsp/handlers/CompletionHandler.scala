@@ -58,7 +58,12 @@ object CompletionHandler:
       (builtinTags ++ collected).distinct.map { tag =>
         val item = new CompletionItem(tag)
         item.setKind(CompletionItemKind.Text)
-        item.setInsertText(tag)
+        // The user has already typed the "@" that triggered completion; inserting a
+        // tag that also starts with "@" would yield "@@tag". Insert/filter on the
+        // name without the leading "@" so the result is a single "@tag".
+        val withoutAt = tag.stripPrefix("@")
+        item.setInsertText(withoutAt)
+        item.setFilterText(withoutAt)
         item
       }
     }

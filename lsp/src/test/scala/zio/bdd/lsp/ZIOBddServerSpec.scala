@@ -197,6 +197,32 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
             labels.contains("@ignore"),
             labels.exists(_.startsWith("@flags"))
           )
+      },
+      test("inserts a tag without doubling the leading @ already typed") {
+        val tagged =
+          """|@smoke @checkout
+             |Feature: Checkout
+             |  @
+             |""".stripMargin
+        val taggedUri = "file:///fake/tagged3.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/tagged3.feature", tagged)
+          _      <- server.putContent(taggedUri, tagged)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(taggedUri),
+                     new Position(2, 3) // inside "  @"
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val items = result.getLeft.asScala.toList
+          assertTrue(
+            // Label keeps the @ for display, but insert text drops it so the
+            // already-typed @ is not duplicated into "@@smoke".
+            items.exists(i => i.getLabel == "@smoke" && i.getInsertText == "smoke"),
+            items.exists(i => i.getLabel == "@ignore" && i.getInsertText == "ignore")
+          )
       }
     ),
     suite("structural keyword completion")(

@@ -33,6 +33,35 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
         )
       }
     },
+    test("a scenario outline yields a single run-scenario lens targeting all rows") {
+      val outline =
+        """Feature: Math
+          |  Scenario Outline: Addition table
+          |    When I add <a> and <b>
+          |    Then the result should be <sum>
+          |
+          |    Examples:
+          |      | a | b | sum |
+          |      | 0 | 0 | 0   |
+          |      | 1 | 1 | 2   |
+          |      | 2 | 3 | 5   |
+          |""".stripMargin
+      for
+        index  <- ZIO.service[WorkspaceIndex]
+        lenses <- CodeLensHandler.codeLenses("file:///tmp/math.feature", outline, index)
+      yield {
+        val scenarioLenses = lenses.tail // head is the feature lens
+        val command        = scenarioLenses.headOption.map(_.getCommand.getArguments.get(0).toString).getOrElse("")
+        assertTrue(
+          // 1 feature lens + 1 scenario lens — NOT one per expanded Examples row.
+          lenses.length == 2,
+          scenarioLenses.length == 1,
+          command.contains("--scenario-name \\\"Addition table"),
+          // A trailing glob so the lens runs every expanded row, not just one.
+          command.contains("*\\\" --focused")
+        )
+      }
+    },
     test("single quotes in scenario names pass through unescaped (bash double-quoted context)") {
       val withQuote =
         """Feature: Greeting
