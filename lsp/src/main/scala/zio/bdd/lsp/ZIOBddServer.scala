@@ -57,7 +57,7 @@ final class ZIOBddServer(
     caps.setReferencesProvider(true)
     caps.setCodeActionProvider(true)
     caps.setCompletionProvider(
-      new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/").asJava)
+      new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/", "@").asJava)
     )
     CompletableFuture.completedFuture(new InitializeResult(caps))
 
@@ -360,8 +360,14 @@ final class ZIOBddServer(
         selector    = handlers.CodeLensHandler.suiteSelector(suiteFiles)
         flags = scenarioName match
                   case Some(name) =>
+                    val content = currentContent(featureUri) match
+                      case "" => readFile(featurePath)
+                      case c  => c
+                    val scenarios =
+                      GherkinBridge.parseFeature(content, featurePath).toOption.map(_.scenarios).getOrElse(Nil)
+                    val pattern = handlers.CodeLensHandler.scenarioRunPattern(scenarios, name)
                     s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}" +
-                      s" --scenario-name ${handlers.CodeLensHandler.shellQuote(name)} --focused"
+                      s" --scenario-name ${handlers.CodeLensHandler.shellQuote(pattern)} --focused"
                   case None =>
                     s"--feature-file ${handlers.CodeLensHandler.shellQuote(featurePath)}"
       yield handlers.CodeLensHandler.buildRunCommand(selector, flags)

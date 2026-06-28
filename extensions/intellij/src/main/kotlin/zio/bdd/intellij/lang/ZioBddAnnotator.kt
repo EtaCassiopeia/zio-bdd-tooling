@@ -4,14 +4,26 @@ import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.Annotator
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.project.DumbService
+import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
 import zio.bdd.intellij.lang.psi.ZioBddStep
 
 class ZioBddAnnotator : Annotator {
 
+    private val stepKeywords = listOf("Given", "When", "Then", "And", "But")
+
     override fun annotate(element: PsiElement, holder: AnnotationHolder) {
-        if (element !is ZioBddStep) return
         if (DumbService.isDumb(element.project)) return
+
+        // A mis-cased keyword (e.g. "then") is lexed as plain TEXT/STEP_TEXT, not a
+        // step, so the runner silently ignores the line and the step never runs.
+        val type = element.node?.elementType
+        if (type == ZioBddTokenTypes.TEXT || type == ZioBddTokenTypes.STEP_TEXT) {
+            annotateMiscasedKeyword(element, holder)
+            return
+        }
+
+        if (element !is ZioBddStep) return
 
         val keyword  = element.getKeyword()
         val stepText = element.getStepText()
@@ -32,6 +44,25 @@ class ZioBddAnnotator : Annotator {
         holder.newAnnotation(HighlightSeverity.WARNING, message)
             .range(element)
             .withFix(ZioBddGenerateStepFix(keyword, stepText))
+            .create()
+    }
+
+    // Flag a line whose first word is a step keyword spelled with the wrong case
+    // (e.g. "then" → "Then"). Only exact case-insensitive matches are flagged —
+    // never fuzzy near-misses, which would false-positive on description prose.
+    private fun annotateMiscasedKeyword(element: PsiElement, holder: AnnotationHolder) {
+        val raw     = element.text
+        val trimmed = raw.trimStart()
+        val word    = trimmed.takeWhile { it.isLetter() }
+        if (word.isEmpty()) return
+        val kw = stepKeywords.firstOrNull { it.equals(word, ignoreCase = true) && it != word } ?: return
+        val wordStart = element.textRange.startOffset + (raw.length - trimmed.length)
+        holder.newAnnotation(
+            HighlightSeverity.ERROR,
+            "Step keyword \"$word\" must be capitalised as \"$kw\". " +
+                "The runner ignores mis-cased keywords, so this step will not run.",
+        )
+            .range(TextRange(wordStart, wordStart + word.length))
             .create()
     }
 

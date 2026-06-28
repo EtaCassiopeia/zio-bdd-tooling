@@ -38,6 +38,19 @@ class ZioBddStepCache(private val project: Project) {
         }
     }
 
+    /**
+     * Fast, blocking, static-only warm-up for latency-sensitive callers like code
+     * completion. Populates step display texts from the source scan (no BSP
+     * subprocess — that can take seconds), so the very first completion has data,
+     * then schedules the full refresh to upgrade patterns in the background.
+     */
+    fun ensureStaticWarmed() {
+        if (snapshot.isNotEmpty()) return
+        val fresh = staticScan()
+        if (fresh.isNotEmpty()) snapshot = fresh
+        if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
+    }
+
     fun invalidate() {
         snapshot  = emptyMap()
         lastScan.set(0L)
@@ -93,8 +106,9 @@ class ZioBddStepCache(private val project: Project) {
         }
     }
 
-    private fun doRefresh() {
-        // 1. Static scan: collects file + line info for goto-definition and hover.
+    // Source-only scan: collects file + line info for goto-definition, hover, and
+    // completion. Fast (file read + regex) — no subprocess.
+    private fun staticScan(): MutableMap<String, List<KtStepDefinition>> {
         val fresh = mutableMapOf<String, List<KtStepDefinition>>()
         try {
             scalaFiles().forEach { vf ->
@@ -105,6 +119,12 @@ class ZioBddStepCache(private val project: Project) {
                 } catch (_: Exception) {}
             }
         } catch (_: Exception) {}
+        return fresh
+    }
+
+    private fun doRefresh() {
+        // 1. Static scan: collects file + line info for goto-definition and hover.
+        val fresh = staticScan()
 
         // 2. BSP class-loading: upgrade step patterns with runtime-accurate regexes.
         //    Works once the LSP server has extracted zio-bdd-lsp.jar. If unavailable,
@@ -123,8 +143,11 @@ class ZioBddStepCache(private val project: Project) {
             }
         }
 
-        // Atomic swap — no reader ever sees a partially-populated map
-        snapshot = fresh
+        // Atomic swap — no reader ever sees a partially-populated map. Don't clobber
+        // a populated cache with a transient empty scan (e.g. a background refresh
+        // that ran without read access); only replace when the scan found something
+        // or the cache was empty anyway.
+        if (fresh.isNotEmpty() || snapshot.isEmpty()) snapshot = fresh
         lastScan.set(System.currentTimeMillis())
     }
 

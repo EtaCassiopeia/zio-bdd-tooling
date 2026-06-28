@@ -7,7 +7,7 @@ plugins {
 }
 
 group   = "zio.bdd"
-version = "0.9.0"
+version = "0.9.3"
 
 repositories {
     mavenCentral()
@@ -30,6 +30,7 @@ dependencies {
         testFramework(TestFrameworkType.Platform)
         zipSigner()
     }
+    testImplementation("junit:junit:4.13.2")
 }
 
 intellijPlatform {

@@ -40,6 +40,14 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
   private val featureFile = "/fake/checkout.feature"
   private val featureUri  = s"file://$featureFile"
 
+  private def jsonObject(featureUri: String, scenarioName: Option[String]): com.google.gson.JsonObject =
+    val obj = new com.google.gson.JsonObject()
+    obj.addProperty("featureUri", featureUri)
+    scenarioName match
+      case Some(name) => obj.addProperty("scenarioName", name)
+      case None       => obj.add("scenarioName", com.google.gson.JsonNull.INSTANCE)
+    obj
+
   private def makeServer: ZIO[WorkspaceIndex & ZIOBddServer, Nothing, ZIOBddServer] =
     for
       index  <- ZIO.service[WorkspaceIndex]
@@ -127,6 +135,235 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
         yield
           val items = result.getLeft.asScala.toList
           assertTrue(items.nonEmpty)
+      }
+    ),
+    suite("tag completion")(
+      test("collects tags from indexed feature files (allTags)") {
+        val tagged =
+          """|@smoke @checkout
+             |Feature: Checkout
+             |  @fast
+             |  Scenario: Happy path
+             |    Given the cart has 3 items
+             |""".stripMargin
+        for
+          _     <- makeServer
+          index <- ZIO.service[WorkspaceIndex]
+          _     <- index.indexFeatureFile("/fake/tagged.feature", tagged)
+          tags  <- index.allTags
+        yield assertTrue(tags.contains("smoke"), tags.contains("checkout"), tags.contains("fast"))
+      },
+      test("does not mistake an @ inside step text for a tag") {
+        val withAt =
+          """|Feature: F
+             |  Scenario: S
+             |    Given the user mentions user@host
+             |""".stripMargin
+        for
+          _     <- makeServer
+          index <- ZIO.service[WorkspaceIndex]
+          _     <- index.indexFeatureFile("/fake/atstep.feature", withAt)
+          tags  <- index.allTags
+        yield assertTrue(!tags.contains("host"))
+      },
+      test("drops a file's tags when it is removed") {
+        val tagged =
+          """|@only @here
+             |Feature: F
+             |""".stripMargin
+        for
+          _      <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/removable.feature", tagged)
+          before <- index.allTags
+          _      <- index.removeFile("/fake/removable.feature")
+          after  <- index.allTags
+        yield assertTrue(before.contains("only"), !after.contains("only"), !after.contains("here"))
+      },
+      test("offers workspace tags and built-ins on a line starting with @") {
+        val tagged =
+          """|@smoke @checkout
+             |Feature: Checkout
+             |  @
+             |""".stripMargin
+        val taggedUri = "file:///fake/tagged2.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/tagged2.feature", tagged)
+          _      <- server.putContent(taggedUri, tagged)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(taggedUri),
+                     new Position(2, 3) // inside "  @"
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val labels = result.getLeft.asScala.toList.map(_.getLabel)
+          assertTrue(
+            labels.contains("@smoke"),
+            labels.contains("@checkout"),
+            labels.contains("@ignore"),
+            labels.exists(_.startsWith("@flags"))
+          )
+      },
+      test("inserts a tag without doubling the leading @ already typed") {
+        val tagged =
+          """|@smoke @checkout
+             |Feature: Checkout
+             |  @
+             |""".stripMargin
+        val taggedUri = "file:///fake/tagged3.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/tagged3.feature", tagged)
+          _      <- server.putContent(taggedUri, tagged)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(taggedUri),
+                     new Position(2, 3) // inside "  @"
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val items = result.getLeft.asScala.toList
+          assertTrue(
+            // Label keeps the @ for display, but insert text drops it so the
+            // already-typed @ is not duplicated into "@@smoke".
+            items.exists(i => i.getLabel == "@smoke" && i.getInsertText == "smoke"),
+            items.exists(i => i.getLabel == "@ignore" && i.getInsertText == "ignore")
+          )
+      }
+    ),
+    suite("structural keyword completion")(
+      test("offers structural keywords on a blank line") {
+        val doc =
+          """|Feature: F
+             |
+             |""".stripMargin
+        val docUri = "file:///fake/blank.feature"
+        for
+          server <- makeServer
+          _      <- server.putContent(docUri, doc)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(docUri),
+                     new Position(1, 0) // the blank line
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val labels = result.getLeft.asScala.toList.map(_.getLabel)
+          assertTrue(
+            labels.contains("Feature:"),
+            labels.contains("Background:"),
+            labels.contains("Scenario:"),
+            labels.contains("Scenario Outline:"),
+            labels.contains("Rule:"),
+            labels.contains("Examples:")
+          )
+      },
+      test("filters structural keywords by the typed prefix") {
+        val doc =
+          """|Feature: F
+             |  Sc
+             |""".stripMargin
+        val docUri = "file:///fake/prefix.feature"
+        for
+          server <- makeServer
+          _      <- server.putContent(docUri, doc)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(docUri),
+                     new Position(1, 4) // after "Sc"
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val labels = result.getLeft.asScala.toList.map(_.getLabel)
+          assertTrue(
+            labels.contains("Scenario:"),
+            labels.contains("Scenario Outline:"),
+            !labels.contains("Feature:"),
+            !labels.contains("Background:"),
+            !labels.contains("Rule:")
+          )
+      },
+      test("offers snippet template items with tab stops") {
+        val doc =
+          """|Feature: F
+             |
+             |""".stripMargin
+        val docUri = "file:///fake/snippet.feature"
+        for
+          server <- makeServer
+          _      <- server.putContent(docUri, doc)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(docUri),
+                     new Position(1, 0)
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val items    = result.getLeft.asScala.toList
+          val snippets = items.filter(_.getInsertTextFormat == InsertTextFormat.Snippet)
+          assertTrue(
+            snippets.nonEmpty,
+            snippets.exists(i => Option(i.getInsertText).exists(_.contains("${1:")))
+          )
+      }
+    ),
+    suite("buildRunCommand")(
+      test("targets a single scenario with an exact, sbt-quoted name and --feature-file") {
+        val doc =
+          """|Feature: Math
+             |  Scenario: Add two integers
+             |    When I add 3 and 5
+             |    Then the result should be 8
+             |""".stripMargin
+        val docUri = "file:///fake/math1.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/math1.feature", doc)
+          _      <- server.putContent(docUri, doc)
+          params  = jsonObject(docUri, Some("Add two integers"))
+          cmd    <- ZIO.fromCompletableFuture(server.buildRunCommand(params))
+        yield assertTrue(
+          cmd.contains("--feature-file \\\"/fake/math1.feature\\\""),
+          cmd.contains("--scenario-name \\\"Add two integers\\\" --focused"),
+          !cmd.contains("--scenario-name \\\"Add two integers*")
+        )
+      },
+      test("targets all rows of a scenario outline with a glob") {
+        val doc =
+          """|Feature: Math
+             |  Scenario Outline: Addition table
+             |    When I add <a> and <b>
+             |    Then the result should be <sum>
+             |
+             |    Examples:
+             |      | a | b | sum |
+             |      | 0 | 0 | 0   |
+             |      | 1 | 1 | 2   |
+             |""".stripMargin
+        val docUri = "file:///fake/math2.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/math2.feature", doc)
+          _      <- server.putContent(docUri, doc)
+          params  = jsonObject(docUri, Some("Addition table"))
+          cmd    <- ZIO.fromCompletableFuture(server.buildRunCommand(params))
+        yield assertTrue(cmd.contains("--scenario-name \\\"Addition table*\\\" --focused"))
+      }
+    ),
+    suite("completion capabilities")(
+      test("advertises @ as a completion trigger character") {
+        for
+          server <- makeServer
+          result <- ZIO.attempt(server.initialize(new InitializeParams())).orDie
+          init   <- ZIO.fromCompletableFuture(result)
+        yield
+          val triggers =
+            Option(init.getCapabilities.getCompletionProvider)
+              .flatMap(p => Option(p.getTriggerCharacters))
+              .map(_.asScala.toList)
+              .getOrElse(Nil)
+          assertTrue(triggers.contains("@"))
       }
     ),
     suite("codeAction")(

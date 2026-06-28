@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as path from 'path';
+import { LanguageClient } from 'vscode-languageclient/node';
 
 // All step-block keywords that introduce a named scenario.
 const SCENARIO_RE = /^\s*(Scenario Outline:|Scenario Template:|Scenario:|Example:)\s*(.*)$/;
@@ -16,7 +17,7 @@ const FEATURE_RE  = /^\s*Feature:\s*(.*)$/;
  */
 export function registerTestController(
   context: vscode.ExtensionContext,
-  _client: unknown,
+  client: LanguageClient,
 ): void {
   const controller = vscode.tests.createTestController('zio-bdd', 'zio-bdd Scenarios');
   context.subscriptions.push(controller);
@@ -24,7 +25,7 @@ export function registerTestController(
   controller.createRunProfile(
     'Run',
     vscode.TestRunProfileKind.Run,
-    (request, token) => runTests(request, token, controller),
+    (request, token) => runTests(request, token, controller, client),
     true,
   );
 
@@ -77,10 +78,9 @@ async function runTests(
   request: vscode.TestRunRequest,
   token: vscode.CancellationToken,
   controller: vscode.TestController,
+  client: LanguageClient,
 ): Promise<void> {
   const run  = controller.createTestRun(request);
-  const conf = vscode.workspace.getConfiguration('zio-bdd');
-  const sbt  = conf.get<string>('sbtCommand') ?? 'sbt';
   const cwd  = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
   const items = request.include ?? [...collectAll(controller.items)];
@@ -90,21 +90,33 @@ async function runTests(
     if (token.isCancellationRequested) break;
     if (excluded.has(item.id)) continue;
     run.started(item);
-    await executeItem(item, sbt, cwd, run, token);
+    await executeItem(item, client, cwd, run, token);
   }
 
   run.end();
 }
 
-function executeItem(
+async function executeItem(
   item: vscode.TestItem,
-  sbt: string,
+  client: LanguageClient,
   cwd: string | undefined,
   run: vscode.TestRun,
   token: vscode.CancellationToken,
 ): Promise<void> {
+  // Build the command on the LSP server (the same path the CodeLens uses): it
+  // knows the matching suite selector, adds --feature-file, and quotes for sbt.
+  // Building it here can't see the workspace index, so it would mis-target.
+  let cmd: string;
+  try {
+    const featureUri   = item.uri?.toString();
+    const scenarioName = item.id.includes('::') ? item.label : null;
+    cmd = await client.sendRequest<string>('zio-bdd/buildRunCommand', { featureUri, scenarioName });
+  } catch (err) {
+    run.failed(item, new vscode.TestMessage(`Could not build run command from the zio-bdd LSP: ${err}`));
+    return;
+  }
+
   return new Promise(resolve => {
-    const cmd = buildSbtCommand(sbt, item);
     run.appendOutput(`▶ ${cmd}\r\n`, undefined, item);
 
     const proc = cp.spawn(cmd, { shell: true, cwd, env: process.env });
@@ -136,25 +148,6 @@ function executeItem(
       resolve();
     });
   });
-}
-
-function buildSbtCommand(sbt: string, item: vscode.TestItem): string {
-  // Scenario-level: run only the named scenario, --focused suppresses the "IGNORED"
-  // output for every other scenario so the report only shows what actually ran.
-  if (item.id.includes('::')) {
-    return `${sbt} "testOnly * -- --scenario-name ${shellEscape(item.label)} --focused"`;
-  }
-  // Feature-level: run all tests; each suite loads its own configured featureDirs.
-  // Passing --feature-file would override featureDirs on every suite and cause
-  // suites whose step definitions don't match the feature to report failures.
-  return `${sbt} "testOnly * -- --focused"`;
-}
-
-function shellEscape(s: string): string {
-  // Single-quote escaping that works on bash/zsh; on Windows the shell: true
-  // path uses cmd.exe where quoting is different — double-quote instead.
-  if (process.platform === 'win32') return `"${s.replace(/"/g, '\\"')}"`;
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function normaliseNewlines(s: string): string {

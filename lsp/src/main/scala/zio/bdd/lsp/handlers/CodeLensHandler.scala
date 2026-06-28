@@ -31,7 +31,16 @@ object CodeLensHandler:
           val path = uri.stripPrefix("file://")
           index.suiteFilesForFeature(path).map { suiteFiles =>
             val selector = suiteSelector(suiteFiles)
-            featureLens(feature, path, selector) :: feature.scenarios.map(scenarioLens(_, path, selector))
+            // A Scenario Outline is expanded by the parser into one Scenario per
+            // Examples row, all sharing the outline's header line. Group by line so
+            // each outline yields a single "Run scenario" lens, not one per row.
+            val scenarioLenses =
+              feature.scenarios
+                .groupBy(s => toLsp(s.line))
+                .toList
+                .sortBy(_._1)
+                .map((_, group) => scenarioLens(group, path, selector))
+            featureLens(feature, path, selector) :: scenarioLenses
           }
 
   // Emit an "N usages" lens above each step definition in a .scala file.
@@ -59,18 +68,29 @@ object CodeLensHandler:
     command.setArguments(List[Object](buildRunCommand(selector, s"--feature-file ${shellQuote(path)}")).asJava)
     new CodeLens(lineRange(line), command, null)
 
-  private def scenarioLens(scenario: Scenario, path: String, selector: String): CodeLens =
-    val line    = toLsp(scenario.line)
+  // `group` is the set of scenarios sharing one source line: a single Scenario,
+  // or every expanded row of one Scenario Outline. For an outline we target the
+  // whole block with a `<common-prefix>*` glob (--scenario-name is matched as a
+  // case-insensitive glob), so the lens runs all rows rather than just one.
+  private def scenarioLens(group: List[Scenario], path: String, selector: String): CodeLens =
+    val line = toLsp(group.head.line)
+    val namePattern =
+      if group.sizeIs <= 1 then group.head.name
+      else commonPrefix(group.map(_.name)) + "*"
     val command = new Command("▶ Run scenario", "zio-bdd.runCommand")
     command.setArguments(
       List[Object](
         buildRunCommand(
           selector,
-          s"--feature-file ${shellQuote(path)} --scenario-name ${shellQuote(scenario.name)} --focused"
+          s"--feature-file ${shellQuote(path)} --scenario-name ${shellQuote(namePattern)} --focused"
         )
       ).asJava
     )
     new CodeLens(lineRange(line), command, null)
+
+  private def commonPrefix(names: List[String]): String =
+    if names.isEmpty then ""
+    else names.reduce((a, b) => a.zip(b).takeWhile((x, y) => x == y).map(_._1).mkString)
 
   // Derives an sbt test selector from matched Scala file paths.
   // e.g. List("/…/CalculatorSuite.scala") → "*CalculatorSuite*"
@@ -86,6 +106,14 @@ object CodeLensHandler:
   // preserves internal spaces. Single-quoted bash strings are NOT parsed by sbt — it
   // passes the quotes through as literal characters, causing paths like '/file' to fail.
   private[lsp] def shellQuote(value: String): String = "\\\"" + value + "\\\""
+
+  // --scenario-name pattern for `name`: the exact name, or a "<name>*" glob when
+  // `name` is a Scenario Outline the parser expanded into several
+  // "<name> - Example N" rows. --scenario-name is matched as a case-insensitive
+  // glob with a *full* match, so a bare outline name would match none of its rows.
+  private[lsp] def scenarioRunPattern(scenarios: List[Scenario], name: String): String =
+    val expandedRows = scenarios.count(s => s.name == name || s.name.startsWith(s"$name - "))
+    if expandedRows > 1 then s"$name*" else name
 
   private[lsp] def buildRunCommand(selector: String, flags: String): String =
     s"""sbt "testOnly $selector -- $flags""""
