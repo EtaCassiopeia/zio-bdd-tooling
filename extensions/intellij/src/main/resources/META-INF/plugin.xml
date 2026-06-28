@@ -62,6 +62,9 @@
                 implementationClass="zio.bdd.intellij.lang.ZioBddCompletionContributor"
                 order="first"/>
 
+        <!-- Open the completion popup when "@" is typed (tag trigger char) -->
+        <typedHandler implementation="zio.bdd.intellij.lang.ZioBddTypedHandler"/>
+
         <!-- ── Run gutter icons (feature files) ─────────────────────────── -->
         <codeInsight.lineMarkerProvider
                 language="ZioBddGherkin"
