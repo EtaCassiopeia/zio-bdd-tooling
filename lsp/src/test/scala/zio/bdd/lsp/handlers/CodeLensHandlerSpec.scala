@@ -33,7 +33,7 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
         )
       }
     },
-    test("a scenario outline yields a single run-scenario lens targeting all rows") {
+    test("a scenario outline yields a run-outline lens plus one exact lens per example row") {
       val outline =
         """Feature: Math
           |  Scenario Outline: Addition table
@@ -51,14 +51,21 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
         lenses <- CodeLensHandler.codeLenses("file:///tmp/math.feature", outline, index)
       yield {
         val scenarioLenses = lenses.tail // head is the feature lens
-        val command        = scenarioLenses.headOption.map(_.getCommand.getArguments.get(0).toString).getOrElse("")
+        val labels         = scenarioLenses.map(_.getCommand.getTitle)
+        val commands       = scenarioLenses.map(_.getCommand.getArguments.get(0).toString)
         assertTrue(
-          // 1 feature lens + 1 scenario lens — NOT one per expanded Examples row.
-          lenses.length == 2,
-          scenarioLenses.length == 1,
-          command.contains("--scenario-name \\\"Addition table"),
-          // A trailing glob so the lens runs every expanded row, not just one.
-          command.contains("*\\\" --focused")
+          // 1 feature + 1 run-outline + one per expanded Examples row (3).
+          lenses.length == 5,
+          scenarioLenses.length == 4,
+          // The run-outline lens is first, relabelled, and keeps the glob over all rows.
+          labels.head == "▶ Run outline (3 examples)",
+          commands.head.contains("--scenario-name \\\"Addition table - Example *\\\" --focused"),
+          // Each example has its own lens with the exact name (no glob).
+          labels.contains("▶ Run Example 2"),
+          commands.exists(_.contains("--scenario-name \\\"Addition table - Example 1\\\" --focused")),
+          commands.exists(_.contains("--scenario-name \\\"Addition table - Example 3\\\" --focused")),
+          // No bare-glob example lens leaks through.
+          commands.tail.forall(c => !c.contains("Example *"))
         )
       }
     },
