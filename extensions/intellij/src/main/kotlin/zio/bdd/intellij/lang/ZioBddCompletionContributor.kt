@@ -35,17 +35,30 @@ class ZioBddCompletionContributor : CompletionContributor() {
             val step    = findEnclosingStep(parameters.position) ?: return
             val keyword = step.getKeyword()
             val defs    = ZioBddStepCache.getInstance(project).getStepDefinitions()
-            val prefix  = result.prefixMatcher.prefix
 
-            candidatesFor(keyword, defs)
-                .filter { it.displayText.contains(prefix, ignoreCase = true) }
-                .forEach { def ->
-                    result.addElement(
-                        LookupElementBuilder.create(def.displayText)
-                            .withIcon(AllIcons.Nodes.Function)
-                            .withTypeText(def.file.substringAfterLast('/'))
-                    )
-                }
+            // The lexer makes the whole step line a single token, so IntelliJ's
+            // default prefix is just the word at the caret — the full step-text
+            // lookups ("the cart has …") would be filtered out because they don't
+            // start with that word. Match against the step text typed after the
+            // keyword instead.
+            val typed   = stepTextBeforeCaret(parameters, keyword)
+            val matched = result.withPrefixMatcher(typed)
+
+            candidatesFor(keyword, defs).forEach { def ->
+                matched.addElement(
+                    LookupElementBuilder.create(def.displayText)
+                        .withIcon(AllIcons.Nodes.Function)
+                        .withTypeText(def.file.substringAfterLast('/'))
+                )
+            }
+        }
+
+        private fun stepTextBeforeCaret(parameters: CompletionParameters, keyword: String): String {
+            val doc        = parameters.editor.document
+            val offset     = parameters.offset
+            val lineStart  = doc.getLineStartOffset(doc.getLineNumber(offset))
+            val linePrefix = doc.getText(TextRange(lineStart, offset)).trimStart()
+            return linePrefix.removePrefix(keyword).trimStart()
         }
 
         private fun findEnclosingStep(e: PsiElement): ZioBddStep? {
