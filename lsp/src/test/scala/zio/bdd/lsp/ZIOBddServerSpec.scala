@@ -129,6 +129,164 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
           assertTrue(items.nonEmpty)
       }
     ),
+    suite("tag completion")(
+      test("collects tags from indexed feature files (allTags)") {
+        val tagged =
+          """|@smoke @checkout
+             |Feature: Checkout
+             |  @fast
+             |  Scenario: Happy path
+             |    Given the cart has 3 items
+             |""".stripMargin
+        for
+          _     <- makeServer
+          index <- ZIO.service[WorkspaceIndex]
+          _     <- index.indexFeatureFile("/fake/tagged.feature", tagged)
+          tags  <- index.allTags
+        yield assertTrue(tags.contains("smoke"), tags.contains("checkout"), tags.contains("fast"))
+      },
+      test("does not mistake an @ inside step text for a tag") {
+        val withAt =
+          """|Feature: F
+             |  Scenario: S
+             |    Given the user mentions user@host
+             |""".stripMargin
+        for
+          _     <- makeServer
+          index <- ZIO.service[WorkspaceIndex]
+          _     <- index.indexFeatureFile("/fake/atstep.feature", withAt)
+          tags  <- index.allTags
+        yield assertTrue(!tags.contains("host"))
+      },
+      test("drops a file's tags when it is removed") {
+        val tagged =
+          """|@only @here
+             |Feature: F
+             |""".stripMargin
+        for
+          _      <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/removable.feature", tagged)
+          before <- index.allTags
+          _      <- index.removeFile("/fake/removable.feature")
+          after  <- index.allTags
+        yield assertTrue(before.contains("only"), !after.contains("only"), !after.contains("here"))
+      },
+      test("offers workspace tags and built-ins on a line starting with @") {
+        val tagged =
+          """|@smoke @checkout
+             |Feature: Checkout
+             |  @
+             |""".stripMargin
+        val taggedUri = "file:///fake/tagged2.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexFeatureFile("/fake/tagged2.feature", tagged)
+          _      <- server.putContent(taggedUri, tagged)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(taggedUri),
+                     new Position(2, 3) // inside "  @"
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val labels = result.getLeft.asScala.toList.map(_.getLabel)
+          assertTrue(
+            labels.contains("@smoke"),
+            labels.contains("@checkout"),
+            labels.contains("@ignore"),
+            labels.exists(_.startsWith("@flags"))
+          )
+      }
+    ),
+    suite("structural keyword completion")(
+      test("offers structural keywords on a blank line") {
+        val doc =
+          """|Feature: F
+             |
+             |""".stripMargin
+        val docUri = "file:///fake/blank.feature"
+        for
+          server <- makeServer
+          _      <- server.putContent(docUri, doc)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(docUri),
+                     new Position(1, 0) // the blank line
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val labels = result.getLeft.asScala.toList.map(_.getLabel)
+          assertTrue(
+            labels.contains("Feature:"),
+            labels.contains("Background:"),
+            labels.contains("Scenario:"),
+            labels.contains("Scenario Outline:"),
+            labels.contains("Rule:"),
+            labels.contains("Examples:")
+          )
+      },
+      test("filters structural keywords by the typed prefix") {
+        val doc =
+          """|Feature: F
+             |  Sc
+             |""".stripMargin
+        val docUri = "file:///fake/prefix.feature"
+        for
+          server <- makeServer
+          _      <- server.putContent(docUri, doc)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(docUri),
+                     new Position(1, 4) // after "Sc"
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val labels = result.getLeft.asScala.toList.map(_.getLabel)
+          assertTrue(
+            labels.contains("Scenario:"),
+            labels.contains("Scenario Outline:"),
+            !labels.contains("Feature:"),
+            !labels.contains("Background:"),
+            !labels.contains("Rule:")
+          )
+      },
+      test("offers snippet template items with tab stops") {
+        val doc =
+          """|Feature: F
+             |
+             |""".stripMargin
+        val docUri = "file:///fake/snippet.feature"
+        for
+          server <- makeServer
+          _      <- server.putContent(docUri, doc)
+          params = new CompletionParams(
+                     new TextDocumentIdentifier(docUri),
+                     new Position(1, 0)
+                   )
+          result <- ZIO.fromCompletableFuture(server.completion(params))
+        yield
+          val items    = result.getLeft.asScala.toList
+          val snippets = items.filter(_.getInsertTextFormat == InsertTextFormat.Snippet)
+          assertTrue(
+            snippets.nonEmpty,
+            snippets.exists(i => Option(i.getInsertText).exists(_.contains("${1:")))
+          )
+      }
+    ),
+    suite("completion capabilities")(
+      test("advertises @ as a completion trigger character") {
+        for
+          server <- makeServer
+          result <- ZIO.attempt(server.initialize(new InitializeParams())).orDie
+          init   <- ZIO.fromCompletableFuture(result)
+        yield
+          val triggers =
+            Option(init.getCapabilities.getCompletionProvider)
+              .flatMap(p => Option(p.getTriggerCharacters))
+              .map(_.asScala.toList)
+              .getOrElse(Nil)
+          assertTrue(triggers.contains("@"))
+      }
+    ),
     suite("codeAction")(
       test("offers skeleton action for an unmatched step diagnostic") {
         val diag = new Diagnostic(

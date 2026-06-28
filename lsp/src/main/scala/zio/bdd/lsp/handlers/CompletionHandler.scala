@@ -33,17 +33,83 @@ object CompletionHandler:
     val line    = content.linesIterator.toList.lift(position.getLine).getOrElse("")
     val trimmed = line.trim
     val kws     = List("Given", "When", "Then", "And", "But", "*")
-    kws.find(kw => trimmed.startsWith(s"$kw ") || trimmed == kw) match
-      case None => ZIO.succeed(Nil)
-      case Some(kw) =>
-        val typed = if trimmed == kw then "" else trimmed.drop(kw.length + 1)
-        index.allSteps.map { defs =>
-          StepMatcher
-            .candidatesFor(kw, defs)
-            .filter(d => typed.isEmpty || d.displayText.toLowerCase.contains(typed.toLowerCase))
-            .map(featureCompletionItem)
-            .take(50)
-        }
+    if trimmed.startsWith("@") then tagCompletion(index)
+    else
+      kws.find(kw => trimmed.startsWith(s"$kw ") || trimmed == kw) match
+        case Some(kw) =>
+          val typed = if trimmed == kw then "" else trimmed.drop(kw.length + 1)
+          index.allSteps.map { defs =>
+            StepMatcher
+              .candidatesFor(kw, defs)
+              .filter(d => typed.isEmpty || d.displayText.toLowerCase.contains(typed.toLowerCase))
+              .map(featureCompletionItem)
+              .take(50)
+          }
+        case None => ZIO.succeed(structuralCompletion(trimmed))
+
+  // ── Tag completion ─────────────────────────────────────────────────────────
+
+  // Built-in tags always offered alongside the workspace-collected ones.
+  private val builtinTags = List("@ignore", "@flags(key=value)")
+
+  private def tagCompletion(index: WorkspaceIndex): UIO[List[CompletionItem]] =
+    index.allTags.map { tags =>
+      val collected = tags.toList.sorted.map(name => s"@$name")
+      (builtinTags ++ collected).distinct.map { tag =>
+        val item = new CompletionItem(tag)
+        item.setKind(CompletionItemKind.Text)
+        item.setInsertText(tag)
+        item
+      }
+    }
+
+  // ── Structural keyword & template completion ───────────────────────────────
+
+  // (label, insertText) for plain structural keywords inserted verbatim.
+  private val structuralKeywords = List(
+    "Feature:"          -> "Feature: ",
+    "Background:"       -> "Background:\n  ",
+    "Scenario:"         -> "Scenario: ",
+    "Scenario Outline:" -> "Scenario Outline: ",
+    "Rule:"             -> "Rule: ",
+    "Examples:"         -> "Examples:\n  | | |\n  | | |"
+  )
+
+  // (label, snippet) templates expanded with LSP tab stops on selection.
+  private val structuralTemplates = List(
+    "Scenario (template)" ->
+      "Scenario: ${1:title}\n  Given ${2:precondition}\n  When ${3:action}\n  Then ${4:outcome}",
+    "Scenario Outline (template)" ->
+      "Scenario Outline: ${1:title}\n  Given ${2:step with <${3:param}>}\n  Examples:\n    | ${3:param} |\n    | ${4:value} |",
+    "Background (template)" ->
+      "Background:\n  Given ${1:shared precondition}",
+    "Feature (template)" ->
+      "Feature: ${1:name}\n\n  Scenario: ${2:first scenario}\n    Given ${3:precondition}\n    When ${4:action}\n    Then ${5:outcome}"
+  )
+
+  private def insertItem(
+    label: String,
+    kind: CompletionItemKind,
+    insert: String,
+    format: InsertTextFormat
+  ): CompletionItem =
+    val item = new CompletionItem(label)
+    item.setKind(kind)
+    item.setInsertText(insert)
+    item.setInsertTextFormat(format)
+    item
+
+  private def structuralCompletion(trimmed: String): List[CompletionItem] =
+    val keep = (label: String) => trimmed.isEmpty || label.toLowerCase.startsWith(trimmed.toLowerCase)
+    val keywordItems = structuralKeywords.collect {
+      case (label, insert) if keep(label) =>
+        insertItem(label, CompletionItemKind.Keyword, insert, InsertTextFormat.PlainText)
+    }
+    val templateItems = structuralTemplates.collect {
+      case (label, snippet) if keep(label) =>
+        insertItem(label, CompletionItemKind.Snippet, snippet, InsertTextFormat.Snippet)
+    }
+    keywordItems ++ templateItems
 
   private def featureCompletionItem(defn: StepDefinition): CompletionItem =
     val item = new CompletionItem(defn.displayText)

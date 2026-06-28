@@ -19,22 +19,27 @@ case class RuntimeStepSummary(keyword: String, pattern: String, displayText: Str
 
 final class WorkspaceIndex private (
   stepsRef: Ref[Map[String, List[StepDefinition]]],
-  featuresRef: Ref[Map[String, Feature]]
+  featuresRef: Ref[Map[String, Feature]],
+  tagsRef: Ref[Map[String, Set[String]]]
 ):
 
   def allSteps: UIO[List[StepDefinition]] = stepsRef.get.map(_.values.flatten.toList)
   def allFeatures: UIO[List[Feature]]     = featuresRef.get.map(_.values.toList)
+  def allTags: UIO[Set[String]]           = tagsRef.get.map(_.values.flatten.toSet)
 
   def indexScalaFile(path: String, content: String): UIO[Unit] =
     stepsRef.update(_.updated(path, StepExtractor.extractFromSource(content, path)))
 
+  // Tags are keyed by path (like steps/features) so re-indexing a file replaces
+  // its tag set and removeFile drops it — the workspace tag set never goes stale.
   def indexFeatureFile(path: String, content: String): UIO[Unit] =
-    GherkinBridge.parseFeature(content, path) match
+    val storeFeature = GherkinBridge.parseFeature(content, path) match
       case Right(f) => featuresRef.update(_.updated(path, f))
       case Left(_)  => ZIO.unit
+    storeFeature *> tagsRef.update(_.updated(path, WorkspaceIndex.scanTags(content)))
 
   def removeFile(path: String): UIO[Unit] =
-    stepsRef.update(_ - path) *> featuresRef.update(_ - path)
+    stepsRef.update(_ - path) *> featuresRef.update(_ - path) *> tagsRef.update(_ - path)
 
   def findStep(keyword: String, text: String): UIO[StepMatcher.MatchResult] =
     allSteps.map(StepMatcher.find(keyword, text, _))
@@ -184,10 +189,22 @@ final class WorkspaceIndex private (
     ZIO.attemptBlocking(Files.readString(Paths.get(path))).orElseSucceed("")
 
 object WorkspaceIndex:
+  // Tags live on their own line: one or more `@name` tokens, optionally a
+  // `@flags(...)` call. Only scan lines that begin with `@` so step text that
+  // happens to contain an `@` is never mistaken for a tag. Captured names omit
+  // the leading `@`.
+  private val tagToken = """@(\w+)""".r
+
+  def scanTags(content: String): Set[String] =
+    content.linesIterator.collect {
+      case line if line.trim.startsWith("@") => tagToken.findAllMatchIn(line).map(_.group(1)).toList
+    }.flatten.toSet
+
   val layer: ULayer[WorkspaceIndex] =
     ZLayer.fromZIO(
       for
         s <- Ref.make(Map.empty[String, List[StepDefinition]])
         f <- Ref.make(Map.empty[String, Feature])
-      yield WorkspaceIndex(s, f)
+        t <- Ref.make(Map.empty[String, Set[String]])
+      yield WorkspaceIndex(s, f, t)
     )

@@ -57,7 +57,7 @@ final class ZIOBddServer(
     caps.setReferencesProvider(true)
     caps.setCodeActionProvider(true)
     caps.setCompletionProvider(
-      new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/").asJava)
+      new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/", "@").asJava)
     )
     CompletableFuture.completedFuture(new InitializeResult(caps))
 
