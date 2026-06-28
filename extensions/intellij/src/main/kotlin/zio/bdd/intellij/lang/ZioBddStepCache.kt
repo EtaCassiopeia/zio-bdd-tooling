@@ -143,8 +143,11 @@ class ZioBddStepCache(private val project: Project) {
             }
         }
 
-        // Atomic swap — no reader ever sees a partially-populated map
-        snapshot = fresh
+        // Atomic swap — no reader ever sees a partially-populated map. Don't clobber
+        // a populated cache with a transient empty scan (e.g. a background refresh
+        // that ran without read access); only replace when the scan found something
+        // or the cache was empty anyway.
+        if (fresh.isNotEmpty() || snapshot.isEmpty()) snapshot = fresh
         lastScan.set(System.currentTimeMillis())
     }
 

@@ -34,10 +34,36 @@ class ZioBddCompletionTest : BasePlatformTestCase() {
             |}
             """.trimMargin(),
         )
-        // No explicit warm — the provider must warm the cache itself on first use.
+        // The light fixture reuses one project across tests, so the project-scoped
+        // cache leaks between them — invalidate before warming for this test's files.
+        ZioBddStepCache.getInstance(myFixture.project).apply { invalidate(); ensureWarmed() }
         myFixture.configureByText("d.feature", "Feature: F\n  Scenario: S\n    Given the <caret>\n")
         val items = myFixture.completeBasic()?.map { it.lookupString } ?: emptyList()
         assertTrue("expected a Given step suggestion, got $items", items.any { it.contains("the cart has") })
+    }
+
+    fun testStepKeywordOffered() {
+        // Blank line → many items (keywords + structural), so no auto-insert.
+        myFixture.configureByText("e.feature", "Feature: F\n  Scenario: S\n    <caret>\n")
+        val items = myFixture.completeBasic()?.map { it.lookupString } ?: emptyList()
+        assertTrue("expected step keywords offered, got $items", items.containsAll(listOf("Given", "When", "Then")))
+    }
+
+    fun testStepInsertFillsExampleValues() {
+        myFixture.addFileToProject(
+            "DecSteps.scala",
+            """
+            |class DecSteps {
+            |  Then("the decimal result should be " / double) { d => () }
+            |}
+            """.trimMargin(),
+        )
+        ZioBddStepCache.getInstance(myFixture.project).apply { invalidate(); ensureWarmed() }
+        myFixture.configureByText("f.feature", "Feature: F\n  Scenario: S\n    Then the dec<caret>\n")
+        myFixture.completeBasic() // single match auto-inserts and runs the template
+        val text = myFixture.file.text
+        assertFalse("placeholder left literal in <<$text>>", text.contains("{double}"))
+        assertTrue("example value not filled in <<$text>>", text.contains("9.99"))
     }
 
     fun testStructuralKeywordCompletion() {

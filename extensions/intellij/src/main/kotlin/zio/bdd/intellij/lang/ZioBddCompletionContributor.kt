@@ -60,8 +60,40 @@ class ZioBddCompletionContributor : CompletionContributor() {
                     LookupElementBuilder.create(def.displayText)
                         .withIcon(AllIcons.Nodes.Function)
                         .withTypeText(def.file.substringAfterLast('/'))
+                        .withInsertHandler { ctx, _ -> insertStepTemplate(ctx, def.displayText) }
                 )
             }
+        }
+
+        // The lookup shows the step's display text with "{int}"/"{double}" markers,
+        // but inserting those literally matches no step definition. Replace each
+        // "{type}" with an example value as a live-template tab stop so the inserted
+        // step actually matches (and the user can tab through the values).
+        private fun insertStepTemplate(ctx: InsertionContext, displayText: String) {
+            ctx.document.deleteString(ctx.startOffset, ctx.tailOffset)
+            ctx.commitDocument()
+            ctx.editor.caretModel.moveToOffset(ctx.startOffset)
+            val manager  = TemplateManager.getInstance(ctx.project)
+            val template = manager.createTemplate("", "")
+            template.isToReformat = false
+            val placeholder = Regex("""\{([^}]+)}""")
+            var last = 0
+            var n    = 0
+            placeholder.findAll(displayText).forEach { m ->
+                template.addTextSegment(displayText.substring(last, m.range.first))
+                template.addVariable("p${n++}", TextExpression(exampleValue(m.groupValues[1])), true)
+                last = m.range.last + 1
+            }
+            template.addTextSegment(displayText.substring(last))
+            manager.startTemplate(ctx.editor, template)
+        }
+
+        private fun exampleValue(type: String): String = when (type.lowercase()) {
+            "int", "long", "bigint"                    -> "42"
+            "double", "float", "decimal", "bigdecimal" -> "9.99"
+            "boolean"                                  -> "true"
+            "string", "word"                           -> "value"
+            else                                       -> type
         }
 
         private fun stepTextBeforeCaret(parameters: CompletionParameters, keyword: String): String {
@@ -142,6 +174,20 @@ class ZioBddCompletionContributor : CompletionContributor() {
 
         private fun addStructural(trimmed: String, result: CompletionResultSet) {
             val keep = { label: String -> trimmed.isEmpty() || label.startsWith(trimmed, ignoreCase = true) }
+            // Step keywords — offered on a blank/partial line so a step can be started
+            // (e.g. typing "Th" offers "Then"). A trailing space is added so step
+            // definition completion can follow immediately.
+            listOf("Given", "When", "Then", "And", "But").filter { keep(it) }.forEach { kw ->
+                result.addElement(
+                    LookupElementBuilder.create(kw).bold().withInsertHandler { ctx, _ ->
+                        val tail = ctx.tailOffset
+                        if (tail >= ctx.document.textLength || ctx.document.charsSequence[tail] != ' ')
+                            ctx.document.insertString(tail, " ")
+                        ctx.commitDocument()
+                        ctx.editor.caretModel.moveToOffset(tail + 1)
+                    },
+                )
+            }
             structuralKeywords.filter { keep(it.first) }.forEach { (label, insert) ->
                 result.addElement(
                     LookupElementBuilder.create(label)
