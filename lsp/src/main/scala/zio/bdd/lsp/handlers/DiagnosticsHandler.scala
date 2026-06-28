@@ -21,8 +21,11 @@ object DiagnosticsHandler:
     index: WorkspaceIndex
   ): UIO[List[Diagnostic]] =
     val sourceLines = content.linesIterator.toIndexedSeq
+    // Independent of a successful parse: the gherkin parser silently treats a
+    // mis-cased keyword as description text, so it never reaches scenario.steps.
+    val keywordDiags = miscasedKeywordDiagnostics(sourceLines)
     index.allSteps.map { allDefs =>
-      GherkinBridge.parseFeature(content, featureUri) match
+      val stepDiags = GherkinBridge.parseFeature(content, featureUri) match
         case Left(_) => Nil
         case Right(feature) =>
           for
@@ -31,7 +34,55 @@ object DiagnosticsHandler:
             step <- scenario.steps
             diag <- diagnosticFor(step, allDefs, sourceLines)
           yield diag
+      keywordDiags ++ stepDiags
     }
+
+  private val stepKeywords    = List("Given", "When", "Then", "And", "But")
+  private val validStepStarts = ("* " :: stepKeywords.map(_ + " "))
+  private val structuralWords = List("Feature", "Background", "Scenario", "Scenarios", "Rule", "Examples", "Example")
+
+  /**
+   * Flag step lines whose keyword is mis-capitalised (e.g. `then` → `Then`).
+   * Gherkin keywords are case-sensitive; the runner ignores a mis-cased line,
+   * so the step silently never runs. We only flag exact case-insensitive
+   * matches of a real keyword — never fuzzy near-misses, which would
+   * false-positive on ordinary prose (e.g. a description starting with "The").
+   */
+  private def miscasedKeywordDiagnostics(sourceLines: IndexedSeq[String]): List[Diagnostic] =
+    var inDocString = false
+    var inFeature   = false
+    val out         = List.newBuilder[Diagnostic]
+    sourceLines.zipWithIndex.foreach { (raw, idx) =>
+      val trimmed = raw.trim
+      if trimmed.startsWith("\"\"\"") || trimmed.startsWith("```") then inDocString = !inDocString
+      else if !inDocString then
+        if isStructural(trimmed) then inFeature = true
+        else if inFeature && isPotentialStepLine(trimmed) then
+          val word = trimmed.takeWhile(_.isLetter)
+          stepKeywords.find(kw => kw.equalsIgnoreCase(word) && kw != word).foreach { kw =>
+            val startCol = raw.indexWhere(!_.isWhitespace).max(0)
+            val range    = new Range(new Position(idx, startCol), new Position(idx, startCol + word.length))
+            out += new Diagnostic(
+              range,
+              s"""Step keyword "$word" must be capitalised as "$kw". The runner ignores mis-cased keywords, so this step will not run.""",
+              DiagnosticSeverity.Error,
+              "zio-bdd"
+            )
+          }
+    }
+    out.result()
+
+  private def isStructural(trimmed: String): Boolean =
+    val word = trimmed.takeWhile(_.isLetter)
+    structuralWords.exists(_.equalsIgnoreCase(word))
+
+  private def isPotentialStepLine(trimmed: String): Boolean =
+    trimmed.nonEmpty &&
+      !trimmed.startsWith("#") &&
+      !trimmed.startsWith("@") &&
+      !trimmed.startsWith("|") &&
+      !validStepStarts.exists(trimmed.startsWith) &&
+      !stepKeywords.contains(trimmed)
 
   private def diagnosticFor(
     step: zio.bdd.gherkin.Step,
