@@ -16,6 +16,20 @@ Language tooling for [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) — the
 
 No compile step required. Static source scanning gives instant feedback; BSP upgrades accuracy after each build.
 
+## Install
+
+The extension and plugin are published — install from your editor's marketplace:
+
+- **VS Code** — search **zio-bdd** in the Extensions view, or install
+  [`etacassiopeia.zio-bdd`](https://marketplace.visualstudio.com/items?itemName=etacassiopeia.zio-bdd)
+  (Quick Open: `ext install etacassiopeia.zio-bdd`; CLI: `code --install-extension etacassiopeia.zio-bdd`).
+- **IntelliJ IDEA** — Settings → Plugins → Marketplace → search **zio-bdd**, or open the
+  [JetBrains Marketplace listing](https://plugins.jetbrains.com/plugin/32510-zio-bdd).
+  Requires 2024.3+; no external plugins required.
+
+Both bundle the `zio-bdd-lsp` server, so there's nothing else to set up. Prefer to build from
+source? See [Building from source](#building-from-source) below.
+
 ## Architecture
 
 Three protocols cooperate to give accurate, low-latency feedback:
@@ -97,8 +111,9 @@ The IntelliJ plugin has a full native PSI implementation — no external plugins
 | Run scenario | VS Code Test Explorer | Run configurations + gutter ▶ icons |
 | External plugin dependency | None | None |
 
-## Building
+## Building from source
 
+For contributors and local testing (end users should [install from a marketplace](#install)).
 See [BUILDING.md](BUILDING.md) for full instructions.
 
 ```sh
