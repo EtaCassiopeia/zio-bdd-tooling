@@ -1,4 +1,5 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 
 plugins {
     id("java")
@@ -29,6 +30,7 @@ dependencies {
 
         testFramework(TestFrameworkType.Platform)
         zipSigner()
+        pluginVerifier()
     }
     testImplementation("junit:junit:4.13.2")
 }
@@ -56,6 +58,38 @@ intellijPlatform {
             // Matches the default target platform (2024.3 == build 243) declared above.
             sinceBuild = "243"
             untilBuild = provider { null }
+        }
+    }
+
+    // Runs the same JetBrains Plugin Verifier the Marketplace runs on upload.
+    // Wired into the local pre-push hook (.githooks/pre-push), not CI: verifying the
+    // full IDE range downloads multiple multi-GB IDEs, so instead we check against
+    // the IDE you already have installed (zero download). Failures block the push on
+    // genuine binary-compatibility breakage; deprecated/experimental/internal API
+    // usages are reported as warnings and do NOT fail the build.
+    pluginVerification {
+        failureLevel = listOf(
+            VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
+            VerifyPluginTask.FailureLevel.INVALID_PLUGIN,
+            VerifyPluginTask.FailureLevel.NOT_DYNAMIC,
+        )
+        ides {
+            if (localIdePath.isPresent) {
+                // Verify against a specific installed IDE — no download. The pre-push
+                // hook auto-detects one and passes its path; point it at any other IDE
+                // (e.g. an older release) to sweep the range one version at a time.
+                local(localIdePath.get())
+            } else {
+                // Default: the sinceBuild floor, already cached as the compile target
+                // above, so no extra download.
+                //
+                // We deliberately verify a single IDE per invocation. The pinned
+                // IntelliJ Platform Gradle plugin (2.1.0) does not reliably verify a
+                // multi-IDE `ides {}` block (only the last entry runs) and `recommended()`
+                // resolves an unresolvable `2025.3` coordinate. Bump the plugin to use
+                // those — see issue #28.
+                ide("IC", "2024.3")
+            }
         }
     }
 

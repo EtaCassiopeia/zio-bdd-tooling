@@ -93,6 +93,49 @@ To also verify plugin structure (recommended before release):
 ./gradlew buildPlugin verifyPluginStructure --no-daemon
 ```
 
+### Plugin binary-compatibility verification
+
+`verifyPlugin` runs the JetBrains Plugin Verifier — the same check the Marketplace
+runs on upload — to catch binary-incompatibility regressions against the declared
+IDE range. It fails only on genuine compatibility problems; deprecated / experimental /
+internal API usages are reported as warnings (configured via `pluginVerification.failureLevel`).
+
+By default it verifies against the cached sinceBuild floor (no download). Point it at an
+installed IDE to verify against the version you actually run (still no download):
+
+```sh
+./gradlew verifyPlugin -PzioBdd.intellij.localPath="/Applications/IntelliJ IDEA.app"
+```
+
+To sweep the wider compatibility range, point `localIdePath` at each IDE you have
+installed (one invocation per version — no download):
+
+```sh
+for ide in "IntelliJ IDEA.app" "IntelliJ IDEA 2024.3.app"; do
+  ./gradlew verifyPlugin -PzioBdd.intellij.localPath="$HOME/Applications/$ide"
+done
+```
+
+> Each `verifyPlugin` invocation checks a single IDE on purpose: the pinned IntelliJ
+> Platform Gradle plugin (2.1.0) does not reliably verify a multi-IDE `ides {}` block,
+> and its `recommended()` helper resolves a `2025.3` coordinate it cannot download.
+> Bumping the Gradle plugin (see issue #28) enables both. The plugin has been verified
+> Compatible against IC 2024.3, 2025.1.x, 2025.2.x and 2026.1.x.
+
+**Pre-push hook (opt-in).** A versioned hook at `.githooks/pre-push` runs `verifyPlugin`
+against your installed IDE before each push that touches `extensions/intellij/`, blocking
+the push on real compatibility breakage. It is **not** run in CI because verifying the full
+IDE range would download multiple multi-GB IDEs per run. Enable it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook auto-detects a JetBrains IDE under `~/Applications` or `/Applications` (override
+with `git config zioBdd.intellij.localPath "/path/to/IDE.app"`), skips when the LSP jar
+hasn't been built, and delegates to any global pre-push hook afterwards. Bypass a single
+push with `ZIOBDD_SKIP_VERIFY=1 git push`.
+
 ## Build a GraalVM native binary (optional)
 
 `sbt-native-image` is configured for both `lsp` and `cli`. To produce a standalone binary

@@ -1,0 +1,104 @@
+#!/bin/bash
+#
+# Pre-push hook: run the JetBrains Plugin Verifier on the IntelliJ plugin before
+# pushing, so binary-incompatibility regressions are caught locally instead of
+# only at Marketplace-upload time.
+#
+# Enable once per clone:
+#     git config core.hooksPath .githooks
+#
+# Design notes:
+#   * Verifies against the IDE you already have installed (auto-detected, or set
+#     `git config zioBdd.intellij.localPath "/path/to/IDE.app"`) so there is NO
+#     multi-GB IDE download. With no local IDE found it falls back to the cached
+#     sinceBuild floor. For the full IDE range, run on demand instead:
+#         (cd extensions/intellij && ./gradlew verifyPlugin -PzioBdd.intellij.recommended)
+#   * Only runs when the push actually touches extensions/intellij/.
+#   * The LSP fat jar is a build artifact (gitignored). If it is missing the hook
+#     warns and skips rather than blocking the push.
+#   * Bypass for one push with:  ZIOBDD_SKIP_VERIFY=1 git push
+#   * Delegates to your global pre-push hook afterwards (so e.g. commit-message
+#     checks still run), passing the original ref list through on stdin.
+#
+set -u
+
+ZERO='0000000000000000000000000000000000000000'
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+INTELLIJ_DIR="$REPO_ROOT/extensions/intellij"
+
+# Capture stdin (the "<local ref> <local sha> <remote ref> <remote sha>" lines)
+# once: we need it both to decide what changed and to forward to the global hook.
+STDIN_DATA="$(cat)"
+
+run_verifier() {
+    [ -n "${ZIOBDD_SKIP_VERIFY:-}" ] && { echo "pre-push: ZIOBDD_SKIP_VERIFY set — skipping plugin verifier."; return 0; }
+
+    # Did any pushed commit touch the IntelliJ plugin? Best-effort; if we cannot
+    # work out the range, err on the side of running.
+    local touched=0 line local_sha remote_sha cmp base
+    while read -r _ local_sha _ remote_sha; do
+        [ -z "${local_sha:-}" ] && continue
+        [ "$local_sha" = "$ZERO" ] && continue            # branch deletion
+        if [ "$remote_sha" = "$ZERO" ]; then              # new branch on remote
+            base="$(git merge-base "$local_sha" origin/main 2>/dev/null)"
+            cmp="${base:+$base..}$local_sha"
+        else
+            cmp="$remote_sha..$local_sha"
+        fi
+        if [ -z "$base$remote_sha" ] || git diff --name-only "$cmp" 2>/dev/null | grep -q '^extensions/intellij/'; then
+            touched=1
+        fi
+    done <<EOF
+$STDIN_DATA
+EOF
+    [ "$touched" -eq 1 ] || { echo "pre-push: no IntelliJ plugin changes — skipping plugin verifier."; return 0; }
+
+    if [ ! -s "$INTELLIJ_DIR/src/main/resources/bin/zio-bdd-lsp.jar" ]; then
+        echo "pre-push: LSP jar not built (run 'sbt lsp/assembly') — skipping plugin verifier." >&2
+        return 0
+    fi
+
+    # Locate an installed IDE so verification needs no download.
+    local ide
+    ide="$(git config zioBdd.intellij.localPath || true)"
+    if [ -z "$ide" ]; then
+        for candidate in \
+            "$HOME/Applications/IntelliJ IDEA Ultimate.app" \
+            "$HOME/Applications/IntelliJ IDEA.app" \
+            "$HOME/Applications/IntelliJ IDEA Community Edition.app" \
+            "/Applications/IntelliJ IDEA.app" \
+            "/Applications/IntelliJ IDEA CE.app"; do
+            [ -d "$candidate" ] && { ide="$candidate"; break; }
+        done
+    fi
+
+    local args=(verifyPlugin --no-daemon --console=plain)
+    if [ -n "$ide" ]; then
+        echo "pre-push: verifying plugin against $ide"
+        args+=("-PzioBdd.intellij.localPath=$ide")
+    else
+        echo "pre-push: no installed IDE found — verifying against cached sinceBuild floor."
+    fi
+
+    ( cd "$INTELLIJ_DIR" && ./gradlew "${args[@]}" )
+    local rc=$?
+    if [ $rc -ne 0 ]; then
+        echo "" >&2
+        echo "pre-push: plugin verifier reported binary-incompatibility problems (above)." >&2
+        echo "          See extensions/intellij/build/reports/pluginVerifier/ for the full report." >&2
+        echo "          To push anyway: ZIOBDD_SKIP_VERIFY=1 git push" >&2
+    fi
+    return $rc
+}
+
+run_verifier || exit $?
+
+# Delegate to the global pre-push hook (e.g. commit-message checks), forwarding
+# the original ref list on stdin so it sees the same push.
+GLOBAL_DIR="$(git config --global core.hooksPath || true)"
+GLOBAL_DIR="${GLOBAL_DIR/#\~/$HOME}"
+if [ -n "$GLOBAL_DIR" ] && [ -x "$GLOBAL_DIR/pre-push" ]; then
+    printf '%s\n' "$STDIN_DATA" | "$GLOBAL_DIR/pre-push" "$@"
+    exit $?
+fi
+exit 0
