@@ -18,6 +18,7 @@ class ZioBddColorSettingsPage : ColorSettingsPage {
         AttributesDescriptor("Placeholder (<param>)", ZioBddSyntaxHighlighter.PLACEHOLDER),
         AttributesDescriptor("Tag (@smoke, @regression)", ZioBddSyntaxHighlighter.TAG),
         AttributesDescriptor("Flags tag (@flags(k=v))", ZioBddSyntaxHighlighter.FLAGS_TAG),
+        AttributesDescriptor("Mock tag (@mock(name))", ZioBddSyntaxHighlighter.MOCK_TAG),
         AttributesDescriptor("Comment (# …)", ZioBddSyntaxHighlighter.COMMENT),
         AttributesDescriptor("Table cell separator (|)", ZioBddSyntaxHighlighter.TABLE_PIPE),
         AttributesDescriptor("Doc string (\"\"\" … \"\"\")", ZioBddSyntaxHighlighter.DOC_STRING),
@@ -35,6 +36,7 @@ class ZioBddColorSettingsPage : ColorSettingsPage {
         @smoke @regression
         @flags(rateLimiting=true)
         @flags(rateLimiting=false)
+        @mock(paymentGateway)
         Feature: Account lifecycle
           As a developer I want to test account behaviour
 

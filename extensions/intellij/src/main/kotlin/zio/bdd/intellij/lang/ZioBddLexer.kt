@@ -92,9 +92,10 @@ class ZioBddLexer : LexerBase() {
         // Comment
         if (line.startsWith("#")) return ZioBddTokenTypes.COMMENT
 
-        // Tags line — @flags(...) or regular @tag
+        // Tags line — @flags(...), @mock(...), or regular @tag
         if (line.startsWith("@")) {
             return if (line.contains("@flags(")) ZioBddTokenTypes.FLAGS_TAG
+            else if (line.contains("@mock(")) ZioBddTokenTypes.MOCK_TAG
             else ZioBddTokenTypes.TAG
         }
 

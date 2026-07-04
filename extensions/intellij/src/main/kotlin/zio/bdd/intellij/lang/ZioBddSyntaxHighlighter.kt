@@ -16,6 +16,8 @@ object ZioBddSyntaxHighlighter : SyntaxHighlighterBase() {
     @JvmField val TAG          = key("ZIO_BDD_TAG",           Default.METADATA)
     @JvmField val FLAGS_TAG    = key("ZIO_BDD_FLAGS_TAG",     Default.METADATA)
     @JvmField val FLAGS_VALUE  = key("ZIO_BDD_FLAGS_VALUE",   Default.CONSTANT)
+    @JvmField val MOCK_TAG     = key("ZIO_BDD_MOCK_TAG",      Default.METADATA)
+    @JvmField val MOCK_VALUE   = key("ZIO_BDD_MOCK_VALUE",    Default.CONSTANT)
     @JvmField val COMMENT      = key("ZIO_BDD_COMMENT",       Default.LINE_COMMENT)
     @JvmField val TABLE_PIPE   = key("ZIO_BDD_TABLE_PIPE",    Default.OPERATION_SIGN)
     @JvmField val DOC_STRING   = key("ZIO_BDD_DOC_STRING",    Default.STRING)
@@ -30,6 +32,7 @@ object ZioBddSyntaxHighlighter : SyntaxHighlighterBase() {
     private val STEP_KEYWORD_KEYS = arrayOf(STEP_KEYWORD)
     private val TAG_KEYS          = arrayOf(TAG)
     private val FLAGS_TAG_KEYS    = arrayOf(FLAGS_TAG)
+    private val MOCK_TAG_KEYS     = arrayOf(MOCK_TAG)
     private val COMMENT_KEYS      = arrayOf(COMMENT)
     private val TABLE_PIPE_KEYS   = arrayOf(TABLE_PIPE)
     private val DOC_STRING_KEYS   = arrayOf(DOC_STRING)
@@ -45,6 +48,8 @@ object ZioBddSyntaxHighlighter : SyntaxHighlighterBase() {
             ZioBddTokenTypes.TAG           -> TAG_KEYS
             ZioBddTokenTypes.FLAGS_TAG,
             ZioBddTokenTypes.FLAGS_VALUE   -> FLAGS_TAG_KEYS
+            ZioBddTokenTypes.MOCK_TAG,
+            ZioBddTokenTypes.MOCK_VALUE    -> MOCK_TAG_KEYS
             ZioBddTokenTypes.COMMENT       -> COMMENT_KEYS
             ZioBddTokenTypes.PLACEHOLDER   -> arrayOf(PLACEHOLDER)
             ZioBddTokenTypes.TABLE_PIPE    -> TABLE_PIPE_KEYS

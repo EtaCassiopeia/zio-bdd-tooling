@@ -203,7 +203,8 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
             labels.contains("@smoke"),
             labels.contains("@checkout"),
             labels.contains("@ignore"),
-            labels.exists(_.startsWith("@flags"))
+            labels.exists(_.startsWith("@flags")),
+            labels.exists(_.startsWith("@mock"))
           )
       },
       test("inserts a tag without doubling the leading @ already typed") {
@@ -229,7 +230,8 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
             // Label keeps the @ for display, but insert text drops it so the
             // already-typed @ is not duplicated into "@@smoke".
             items.exists(i => i.getLabel == "@smoke" && i.getInsertText == "smoke"),
-            items.exists(i => i.getLabel == "@ignore" && i.getInsertText == "ignore")
+            items.exists(i => i.getLabel == "@ignore" && i.getInsertText == "ignore"),
+            items.exists(i => i.getLabel == "@mock(name)" && i.getInsertText == "mock(name)")
           )
       }
     ),

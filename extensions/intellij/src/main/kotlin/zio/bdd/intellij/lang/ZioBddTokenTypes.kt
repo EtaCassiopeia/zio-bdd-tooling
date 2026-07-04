@@ -11,6 +11,8 @@ object ZioBddTokenTypes {
     @JvmField val TAG            = IElementType("TAG", ZioBddLanguage)            // @smoke
     @JvmField val FLAGS_TAG      = IElementType("FLAGS_TAG", ZioBddLanguage)      // @flags( prefix
     @JvmField val FLAGS_VALUE    = IElementType("FLAGS_VALUE", ZioBddLanguage)    // k=v content inside @flags(...)
+    @JvmField val MOCK_TAG       = IElementType("MOCK_TAG", ZioBddLanguage)       // @mock( prefix
+    @JvmField val MOCK_VALUE     = IElementType("MOCK_VALUE", ZioBddLanguage)     // catalog name(s) inside @mock(...)
     @JvmField val COMMENT        = IElementType("COMMENT", ZioBddLanguage)        // # ...
     @JvmField val PLACEHOLDER    = IElementType("PLACEHOLDER", ZioBddLanguage)    // <param>
     @JvmField val TABLE_PIPE     = IElementType("TABLE_PIPE", ZioBddLanguage)     // |
@@ -21,7 +23,7 @@ object ZioBddTokenTypes {
     @JvmField val TEXT           = IElementType("TEXT", ZioBddLanguage)           // anything else
 
     val ALL: TokenSet = TokenSet.create(
-        KEYWORD, STEP_KEYWORD, TAG, FLAGS_TAG, FLAGS_VALUE, COMMENT,
+        KEYWORD, STEP_KEYWORD, TAG, FLAGS_TAG, FLAGS_VALUE, MOCK_TAG, MOCK_VALUE, COMMENT,
         PLACEHOLDER, TABLE_PIPE, DOC_STRING, SCENARIO_NAME, FEATURE_NAME, STEP_TEXT, TEXT
     )
 }
