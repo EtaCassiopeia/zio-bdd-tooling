@@ -50,7 +50,7 @@ object CompletionHandler:
   // ── Tag completion ─────────────────────────────────────────────────────────
 
   // Built-in tags always offered alongside the workspace-collected ones.
-  private val builtinTags = List("@ignore", "@flags(key=value)")
+  private val builtinTags = List("@ignore", "@flags(key=value)", "@mock(name)")
 
   private def tagCompletion(index: WorkspaceIndex): UIO[List[CompletionItem]] =
     index.allTags.map { tags =>

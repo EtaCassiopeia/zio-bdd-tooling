@@ -48,6 +48,7 @@ class ZioBddCompletionTest : BasePlatformTestCase() {
         val items = myFixture.completeBasic()?.map { it.lookupString } ?: emptyList()
         assertTrue("expected @ignore among $items", items.contains("@ignore"))
         assertTrue("expected @flags among $items", items.any { it.startsWith("@flags") })
+        assertTrue("expected @mock among $items", items.any { it.startsWith("@mock") })
     }
 
     fun testTagInsertNoDoubleAt() {

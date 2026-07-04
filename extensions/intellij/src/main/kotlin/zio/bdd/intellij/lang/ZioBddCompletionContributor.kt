@@ -113,7 +113,7 @@ class ZioBddCompletionContributor : CompletionContributor() {
     // lines — so the provider inspects the raw line prefix rather than the PSI.
     private object FeatureStructureCompletionProvider : CompletionProvider<CompletionParameters>() {
         private val stepKeywords = listOf("Given", "When", "Then", "And", "But", "*")
-        private val builtinTags  = listOf("@ignore", "@flags(key=value)")
+        private val builtinTags  = listOf("@ignore", "@flags(key=value)", "@mock(name)")
         private val tagToken     = Regex("@(\\w+)")
 
         // (label, insertText) for plain structural keywords.

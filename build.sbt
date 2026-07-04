@@ -6,7 +6,7 @@ ThisBuild / scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked")
 // Default: depend on the latest released zio-bdd artifacts from Maven Central.
 // Override with `-DzioBdd.version=<local-snapshot>` to build against an unreleased
 // core change (run `sbt publishLocal` in a zio-bdd checkout first — see BUILDING.md).
-val zioBddVersion = sys.props.getOrElse("zioBdd.version", "1.1.0")
+val zioBddVersion = sys.props.getOrElse("zioBdd.version", "1.2.0")
 
 // ─── GraalVM native-image flags ──────────────────────────────────────────────
 // Used by both `lsp` and `cli` when NativeImagePlugin is active.

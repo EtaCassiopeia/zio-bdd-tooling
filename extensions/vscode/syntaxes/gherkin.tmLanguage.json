@@ -32,6 +32,14 @@
           }
         },
         {
+          "comment": "@mock(name, ...) — highlight catalog names distinctly",
+          "match": "(@mock)\\(([^)]+)\\)",
+          "captures": {
+            "1": { "name": "entity.name.tag.mock.gherkin" },
+            "2": { "name": "constant.other.mock.gherkin" }
+          }
+        },
+        {
           "name": "entity.name.tag.gherkin",
           "match": "@[\\w\\-\\.]+"
         }
