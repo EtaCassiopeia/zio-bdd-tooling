@@ -205,11 +205,18 @@ final class ZIOBddServer(
             if cp.isEmpty then ZIO.unit
             else
               ZIO.logInfo(s"BSP compile — loading runtime step definitions (${cp.size} cp entries)") *>
-                BspClassLoader.loadSteps(cp).flatMap { summaries =>
-                  if summaries.isEmpty then ZIO.unit
+                BspClassLoader.loadAll(cp).flatMap { result =>
+                  if result.isEmpty then ZIO.unit
                   else
-                    ZIO.logInfo(s"BSP class-loading: merging ${summaries.size} runtime step definitions") *>
-                      index.mergeRuntimeSteps(summaries)
+                    ZIO.logInfo(
+                      s"BSP class-loading: merging ${result.steps.size} runtime step definitions, " +
+                        s"${result.mocks.size} @mock catalog entries"
+                    ) *>
+                      index.mergeRuntimeSteps(result.steps) *>
+                      // Only replace the catalog when this load actually found entries — like
+                      // mergeRuntimeSteps, a transient empty result must not wipe a good catalog
+                      // (which would silently stop unknown-name diagnostics).
+                      ZIO.when(result.mocks.nonEmpty)(index.setMocks(result.mocks)).unit
                 }
           }
       }

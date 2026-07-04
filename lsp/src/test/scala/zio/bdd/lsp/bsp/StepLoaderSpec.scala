@@ -15,9 +15,26 @@ import zio.test.*
 
 final case class FakeSummary(keyword: String, pattern: String, displayText: String)
 
+// Stands in for zio-bdd's MockSummary(name, sourceKind) — the loader reads it
+// purely by reflection (`name`/`sourceKind` accessors), so a plain case class is
+// a faithful stand-in for a MockSteps suite's `allMocks` element.
+final case class FakeMock(name: String, sourceKind: String)
+
 class GoodSuite:
   def allDefinitions: List[FakeSummary] =
     List(FakeSummary("Given", "^a cart with (\\d+) items$", "a cart with {int} items"))
+
+// A suite exposing both step and mock discovery — the shape of a MockSteps-based
+// suite that overrides `mockCatalog`. Order mirrors what `allMocks` returns.
+class MockCatalogSuite:
+  def allDefinitions: List[FakeSummary] =
+    List(FakeSummary("Given", "^ready$", "ready"))
+  def allMocks: List[FakeMock] =
+    List(FakeMock("paymentGateway", "Json"), FakeMock("userService", "Dsl"))
+
+class ThrowingMocksSuite:
+  def allMocks: List[FakeMock] =
+    throw new RuntimeException("allMocks boom")
 
 class NoAllDefsSuite
 
@@ -66,5 +83,46 @@ object StepLoaderSpec extends ZIOSpecDefault:
         )
       )
       assertTrue(steps == expected)
+    },
+    // ── @mock catalog discovery (allMocks) ──────────────────────────────────
+    test("extracts mock catalog entries (name, sourceKind) from a suite via reflection") {
+      assertTrue(
+        StepLoader.mocksFor(classOf[MockCatalogSuite]) ==
+          List(("paymentGateway", "Json"), ("userService", "Dsl"))
+      )
+    },
+    test("returns no mocks when allMocks is absent (a suite that isn't a MockSteps suite)") {
+      assertTrue(StepLoader.mocksFor(classOf[GoodSuite]).isEmpty)
+    },
+    test("returns no mocks when allMocks throws at call time") {
+      assertTrue(StepLoader.mocksFor(classOf[ThrowingMocksSuite]).isEmpty)
+    },
+    test("one failing suite does not block mock discovery for the healthy ones") {
+      val mocks = StepLoader.mocksFromClasses(
+        List(classOf[CtorBombSuite], classOf[MockCatalogSuite], classOf[ThrowingMocksSuite])
+      )
+      assertTrue(mocks == List(("paymentGateway", "Json"), ("userService", "Dsl")))
+    },
+    test("serialize emits a {steps,mocks} envelope carrying both step and mock entries") {
+      val json = StepLoader.serialize(expected, List(("userService", "Dsl")))
+      assertTrue(
+        json.contains("\"steps\""),
+        json.contains("\"mocks\""),
+        json.contains("\"a cart with {int} items\""),
+        json.contains("\"name\":\"userService\""),
+        json.contains("\"sourceKind\":\"Dsl\"")
+      )
+    },
+    test("serialize emits empty arrays (not []) when there is nothing to report") {
+      assertTrue(StepLoader.serialize(Nil, Nil) == """{"steps":[],"mocks":[]}""")
+    },
+    test("summariesFor extracts steps and mocks from a single suite instantiation") {
+      assertTrue(
+        StepLoader.summariesFor(classOf[MockCatalogSuite]) ==
+          (
+            List(("Given", "^ready$", "ready")),
+            List(("paymentGateway", "Json"), ("userService", "Dsl"))
+          )
+      )
     }
   )

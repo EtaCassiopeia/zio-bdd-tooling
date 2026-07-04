@@ -17,15 +17,27 @@ import scala.jdk.CollectionConverters.*
 // keyword/pattern/displayText mirror ZIOSteps.allDefinitions / StepSummary.
 case class RuntimeStepSummary(keyword: String, pattern: String, displayText: String)
 
+// A @mock(name) catalog entry produced by the BSP class-loading subprocess.
+// name/sourceKind mirror MockSteps.allMocks / MockSummary (zio-bdd 1.3.0).
+case class RuntimeMockSummary(name: String, sourceKind: String)
+
 final class WorkspaceIndex private (
   stepsRef: Ref[Map[String, List[StepDefinition]]],
   featuresRef: Ref[Map[String, Feature]],
-  tagsRef: Ref[Map[String, Set[String]]]
+  tagsRef: Ref[Map[String, Set[String]]],
+  // The @mock(name) catalog is a workspace-global fact (it comes from the
+  // compiled test classpath, not from any one file), so — unlike steps/features
+  // — it is a single list, replaced wholesale on each BSP class-load.
+  mocksRef: Ref[List[RuntimeMockSummary]]
 ):
 
-  def allSteps: UIO[List[StepDefinition]] = stepsRef.get.map(_.values.flatten.toList)
-  def allFeatures: UIO[List[Feature]]     = featuresRef.get.map(_.values.toList)
-  def allTags: UIO[Set[String]]           = tagsRef.get.map(_.values.flatten.toSet)
+  def allSteps: UIO[List[StepDefinition]]     = stepsRef.get.map(_.values.flatten.toList)
+  def allFeatures: UIO[List[Feature]]         = featuresRef.get.map(_.values.toList)
+  def allTags: UIO[Set[String]]               = tagsRef.get.map(_.values.flatten.toSet)
+  def allMocks: UIO[List[RuntimeMockSummary]] = mocksRef.get
+
+  // Replace the discovered @mock catalog with the latest BSP class-load result.
+  def setMocks(mocks: List[RuntimeMockSummary]): UIO[Unit] = mocksRef.set(mocks)
 
   def indexScalaFile(path: String, content: String): UIO[Unit] =
     stepsRef.update(_.updated(path, StepExtractor.extractFromSource(content, path)))
@@ -206,5 +218,6 @@ object WorkspaceIndex:
         s <- Ref.make(Map.empty[String, List[StepDefinition]])
         f <- Ref.make(Map.empty[String, Feature])
         t <- Ref.make(Map.empty[String, Set[String]])
-      yield WorkspaceIndex(s, f, t)
+        m <- Ref.make(List.empty[RuntimeMockSummary])
+      yield WorkspaceIndex(s, f, t, m)
     )

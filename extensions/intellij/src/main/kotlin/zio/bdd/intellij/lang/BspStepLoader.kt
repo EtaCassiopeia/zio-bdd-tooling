@@ -1,5 +1,6 @@
 package zio.bdd.intellij.lang
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.OrderEnumerator
@@ -22,8 +23,12 @@ object BspStepLoader {
 
     private const val LOADER_MAIN = "zio.bdd.lsp.bsp.StepLoader"
     private const val TIMEOUT_SEC = 30L
+    private val LOG = Logger.getInstance(BspStepLoader::class.java)
 
-    fun loadSteps(project: Project): List<KtStepDefinition>? {
+    /** The runtime step definitions and @mock catalog from one StepLoader run. */
+    data class LoadResult(val steps: List<KtStepDefinition>, val mocks: List<KtMockSummary>)
+
+    fun loadAll(project: Project): LoadResult? {
         val loaderJar = findLoaderJar() ?: return null
         val testCp    = getTestClasspath(project)
         if (testCp.isEmpty()) return null
@@ -53,7 +58,7 @@ object BspStepLoader {
                 .map { vf -> vf.path }
         }.distinct()
 
-    private fun runSubprocess(classpath: List<String>, loaderJar: String): List<KtStepDefinition>? {
+    private fun runSubprocess(classpath: List<String>, loaderJar: String): LoadResult? {
         val cp = (classpath + loaderJar).joinToString(File.pathSeparator)
         return try {
             val proc = ProcessBuilder(javaExecutable(), "-cp", cp, LOADER_MAIN)
@@ -63,23 +68,31 @@ object BspStepLoader {
             val finished = proc.waitFor(TIMEOUT_SEC, TimeUnit.SECONDS)
             if (!finished) { proc.destroyForcibly(); return null }
             if (proc.exitValue() != 0) return null
-            parseJson(output.trim())
-        } catch (_: Exception) {
+            val json = output.trim()
+            LoadResult(parseSteps(json), parseMocks(json))
+        } catch (e: Exception) {
+            // Fall back to static-scan step definitions (and an unchanged mock catalog),
+            // but leave a trace — otherwise "why is @mock intelligence empty?" is undebuggable.
+            LOG.warn("BspStepLoader: StepLoader subprocess failed; falling back to static scan", e)
             null
         }
     }
 
-    // Parses the JSON array emitted by StepLoader:
-    //   [{"keyword":"...","pattern":"...","displayText":"..."},...]
-    // These definitions have no file/line (they come from the runtime, not the
-    // source scanner); callers merge the accurate pattern into static-scan entries.
-    private fun parseJson(json: String): List<KtStepDefinition> {
-        if (json.isEmpty() || json == "[]") return emptyList()
-        val objPat = Regex("""\{[^}]+\}""")
-        val strPat = Regex(""""([^"\\]*(\\.[^"\\]*)*)"""")
-        return objPat.findAll(json).mapNotNull { objMatch ->
-            val fields = strPat.findAll(objMatch.value).map { it.groupValues[1] }.toList()
-            if (fields.size >= 6)
+    // StepLoader emits `{"steps":[…],"mocks":[…]}` with brace-free inner objects.
+    // `\{[^{}]+\}` matches only the innermost objects (the envelope's outer brace
+    // is skipped); we then dispatch by first key. Definitions have no file/line
+    // (they come from the runtime, not the source scanner); callers merge the
+    // accurate pattern into static-scan entries.
+    private val objPat = Regex("""\{[^{}]+\}""")
+    private val strPat = Regex(""""([^"\\]*(\\.[^"\\]*)*)"""")
+
+    private fun objectFields(json: String): List<List<String>> =
+        objPat.findAll(json).map { m -> strPat.findAll(m.value).map { it.groupValues[1] }.toList() }.toList()
+
+    fun parseSteps(json: String): List<KtStepDefinition> {
+        if (json.isEmpty()) return emptyList()
+        return objectFields(json).mapNotNull { fields ->
+            if (fields.size >= 6 && fields[0] == "keyword")
                 KtStepDefinition(
                     keyword      = unescape(fields[1]),
                     displayText  = unescape(fields[5]),
@@ -90,7 +103,16 @@ object BspStepLoader {
                     line         = -1,
                 )
             else null
-        }.toList()
+        }
+    }
+
+    fun parseMocks(json: String): List<KtMockSummary> {
+        if (json.isEmpty()) return emptyList()
+        return objectFields(json).mapNotNull { fields ->
+            if (fields.size >= 4 && fields[0] == "name")
+                KtMockSummary(name = unescape(fields[1]), sourceKind = unescape(fields[3]))
+            else null
+        }
     }
 
     private fun unescape(s: String): String =

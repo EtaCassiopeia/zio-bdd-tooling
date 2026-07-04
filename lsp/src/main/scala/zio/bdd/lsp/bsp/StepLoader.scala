@@ -15,12 +15,14 @@ import scala.jdk.CollectionConverters.*
  * }}}
  *
  * It scans the classpath for concrete `ZIOSteps` subclasses, instantiates each
- * one, calls `allDefinitions` (introduced in zio-bdd PR #107) via reflection,
- * and writes a JSON array to stdout.
+ * one, calls `allDefinitions` (introduced in zio-bdd PR #107) and — for
+ * `MockSteps`-based suites — `allMocks` (zio-bdd 1.3.0, the `@mock(name)`
+ * catalog) via reflection, and writes a JSON object to stdout of the form
+ * `{"steps":[…],"mocks":[…]}`.
  *
  * Errors are written to stderr; stdout always contains valid JSON (at minimum
- * `[]` on failure). Exit code 0 means the array was written; non-zero means a
- * fatal error prevented scanning entirely.
+ * `{"steps":[],"mocks":[]}` on failure). Exit code 0 means the object was
+ * written; non-zero means a fatal error prevented scanning entirely.
  *
  * The user's zio-bdd version must have `allDefinitions` (added in PR #107). If
  * it doesn't, a warning is printed to stderr and that class's steps are skipped
@@ -45,7 +47,7 @@ object StepLoader:
     catch
       case e: Throwable =>
         System.err.println(s"StepLoader: fatal error — ${e.getClass.getName}: ${e.getMessage}")
-        println("[]")
+        println("""{"steps":[],"mocks":[]}""")
         System.exit(1)
 
   private def loadAndSerialize(): String =
@@ -63,7 +65,32 @@ object StepLoader:
           .flatMap(loadClassSafely)
       finally scan.close()
 
-    buildJson(stepsFromClasses(classes))
+    // Both step and mock discovery reflect over the same already-loaded suites,
+    // so instantiate each suite ONCE and extract both from that single instance —
+    // never construct a suite twice (halves construction cost and can't drop a
+    // catalog from a suite whose constructor is not idempotent).
+    val (steps, mocks) =
+      classes.foldLeft((List.empty[(String, String, String)], List.empty[(String, String)])) {
+        case ((accSteps, accMocks), cls) =>
+          val (s, m) = summariesFor(cls)
+          (accSteps ++ s, accMocks ++ m)
+      }
+    serialize(steps, mocks)
+
+  /**
+   * Extract both step definitions and mock catalog entries from one suite,
+   * instantiating it a single time. A suite that fails to instantiate is logged
+   * once and contributes nothing to either list.
+   */
+  private[bsp] def summariesFor(cls: Class[?]): (List[(String, String, String)], List[(String, String)]) =
+    instantiate(cls) match
+      case Left(e) =>
+        System.err.println(
+          s"StepLoader: cannot instantiate ${cls.getName} — skipping (${e.getClass.getName}: ${e.getMessage})"
+        )
+        (Nil, Nil)
+      case Right(instance) =>
+        (callAllDefinitions(cls, instance), callAllMocks(cls, instance))
 
   /**
    * Load one candidate class in isolation. ClassGraph's batch `loadClasses`
@@ -173,13 +200,81 @@ object StepLoader:
           None
     }
 
-  private def buildJson(entries: List[(String, String, String)]): String =
-    if entries.isEmpty then "[]"
-    else
-      val items = entries.map { case (keyword, pattern, displayText) =>
-        s"""{"keyword":${jsonStr(keyword)},"pattern":${jsonStr(pattern)},"displayText":${jsonStr(displayText)}}"""
-      }
-      s"[${items.mkString(",")}]"
+  // ── @mock catalog discovery (MockSteps.allMocks, zio-bdd 1.3.0) ─────────────
+  //
+  // Mirrors the allDefinitions path. Unlike allDefinitions, a *missing* allMocks
+  // is the common, expected case — most suites are not MockSteps suites — so its
+  // absence is silent rather than a warning.
+
+  private[bsp] def mocksFromClasses(classes: List[Class[?]]): List[(String, String)] =
+    classes.flatMap(mocksFor)
+
+  private[bsp] def mocksFor(cls: Class[?]): List[(String, String)] =
+    instantiate(cls) match
+      case Left(e) =>
+        System.err.println(
+          s"StepLoader: cannot instantiate ${cls.getName} for mock discovery — skipping (${e.getClass.getName}: ${e.getMessage})"
+        )
+        Nil
+      case Right(instance) =>
+        callAllMocks(cls, instance)
+
+  private[bsp] def callAllMocks(cls: Class[?], instance: Any): List[(String, String)] =
+    val method =
+      try cls.getMethod("allMocks")
+      catch
+        // Not a MockSteps suite (or an older zio-bdd without allMocks): normal, so
+        // no warning — this suite simply contributes no catalog entries.
+        case _: NoSuchMethodException => return Nil
+        // A LinkageError from resolving the signature's types: skip this suite so
+        // it can't abort mock discovery for the rest.
+        case e: Throwable =>
+          System.err.println(
+            s"StepLoader: cannot resolve ${cls.getName}.allMocks — skipping " +
+              s"(${e.getClass.getName}: ${e.getMessage})"
+          )
+          return Nil
+
+    val result =
+      try method.invoke(instance)
+      catch
+        case e: Throwable =>
+          System.err.println(
+            s"StepLoader: ${cls.getName}.allMocks threw ${e.getClass.getName}: ${e.getMessage}"
+          )
+          return Nil
+
+    val list =
+      try result.asInstanceOf[scala.collection.immutable.List[Any]]
+      catch
+        case _: ClassCastException =>
+          System.err.println(s"StepLoader: unexpected return type from ${cls.getName}.allMocks")
+          return Nil
+
+    list.flatMap { item =>
+      try
+        val name       = item.getClass.getMethod("name").invoke(item).toString
+        val sourceKind = item.getClass.getMethod("sourceKind").invoke(item).toString
+        Some((name, sourceKind))
+      catch
+        case e: Throwable =>
+          System.err.println(s"StepLoader: error reading MockSummary field: ${e.getMessage}")
+          None
+    }
+
+  // ── Serialization ───────────────────────────────────────────────────────────
+
+  private[bsp] def serialize(
+    steps: List[(String, String, String)],
+    mocks: List[(String, String)]
+  ): String =
+    val stepItems = steps.map { case (keyword, pattern, displayText) =>
+      s"""{"keyword":${jsonStr(keyword)},"pattern":${jsonStr(pattern)},"displayText":${jsonStr(displayText)}}"""
+    }
+    val mockItems = mocks.map { case (name, sourceKind) =>
+      s"""{"name":${jsonStr(name)},"sourceKind":${jsonStr(sourceKind)}}"""
+    }
+    s"""{"steps":[${stepItems.mkString(",")}],"mocks":[${mockItems.mkString(",")}]}"""
 
   private def jsonStr(s: String): String =
     val escaped = s
