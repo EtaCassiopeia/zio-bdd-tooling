@@ -23,6 +23,11 @@ class ZioBddAnnotator : Annotator {
             return
         }
 
+        if (type == ZioBddTokenTypes.MOCK_TAG) {
+            annotateUnknownMockNames(element, holder)
+            return
+        }
+
         if (element !is ZioBddStep) return
 
         val keyword  = element.getKeyword()
@@ -64,6 +69,26 @@ class ZioBddAnnotator : Annotator {
         )
             .range(TextRange(wordStart, wordStart + word.length))
             .create()
+    }
+
+    // Flag each @mock(name) whose name is not in the discovered catalog. Only runs
+    // when the catalog is non-empty (populated by the BSP class-load) — with no
+    // authoritative catalog we say nothing rather than flag a valid name.
+    private fun annotateUnknownMockNames(element: PsiElement, holder: AnnotationHolder) {
+        val catalog = ZioBddStepCache.getInstance(element.project).getMockCatalog()
+        if (catalog.isEmpty()) return
+        val known = catalog.mapTo(HashSet()) { it.name }
+        val base  = element.textRange.startOffset
+        KtMockTag.refs(element.text).forEach { ref ->
+            if (ref.name !in known) {
+                holder.newAnnotation(
+                    HighlightSeverity.WARNING,
+                    "@mock: no catalog entry named '${ref.name}'. Add it to the suite's mockCatalog, or fix the name.",
+                )
+                    .range(TextRange(base + ref.start, base + ref.end))
+                    .create()
+            }
+        }
     }
 
     private fun closestMatch(text: String, defs: List<KtStepDefinition>): KtStepDefinition? {

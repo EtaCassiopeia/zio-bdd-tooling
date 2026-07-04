@@ -3,7 +3,7 @@ package zio.bdd.lsp.handlers
 import org.eclipse.lsp4j.*
 import zio.*
 import zio.bdd.gherkin.StepType
-import zio.bdd.lsp.{GherkinBridge, StepMatcher, WorkspaceIndex}
+import zio.bdd.lsp.{GherkinBridge, MockTag, RuntimeMockSummary, StepMatcher, WorkspaceIndex}
 
 /**
  * Compute LSP warnings for missing step definitions in a .feature file.
@@ -24,7 +24,10 @@ object DiagnosticsHandler:
     // Independent of a successful parse: the gherkin parser silently treats a
     // mis-cased keyword as description text, so it never reaches scenario.steps.
     val keywordDiags = miscasedKeywordDiagnostics(sourceLines)
-    index.allSteps.map { allDefs =>
+    for
+      allDefs <- index.allSteps
+      mocks   <- index.allMocks
+    yield
       val stepDiags = GherkinBridge.parseFeature(content, featureUri) match
         case Left(_) => Nil
         case Right(feature) =>
@@ -34,8 +37,7 @@ object DiagnosticsHandler:
             step <- scenario.steps
             diag <- diagnosticFor(step, allDefs, sourceLines)
           yield diag
-      keywordDiags ++ stepDiags
-    }
+      keywordDiags ++ stepDiags ++ mockCatalogDiagnostics(sourceLines, mocks)
 
   private val stepKeywords    = List("Given", "When", "Then", "And", "But")
   private val validStepStarts = ("* " :: stepKeywords.map(_ + " "))
@@ -117,6 +119,33 @@ object DiagnosticsHandler:
             s"""No step definition found for: "${step.pattern}"
                |Open a step-definition file and start typing inside Given/When/Then(...) for a completion skeleton.""".stripMargin
         Some(new Diagnostic(range, msg, DiagnosticSeverity.Warning, "zio-bdd"))
+
+  /**
+   * Flag each `@mock(name)` whose name is not in the discovered catalog — an
+   * unknown name is a scenario-setup failure at run time (`no catalog entry
+   * named …`). Only runs when the catalog is non-empty: with no authoritative
+   * catalog (discovery not yet run, or a non-mock project) we emit nothing —
+   * flagging a valid name as unknown is worse than saying nothing.
+   */
+  private def mockCatalogDiagnostics(
+    sourceLines: IndexedSeq[String],
+    mocks: List[RuntimeMockSummary]
+  ): List[Diagnostic] =
+    if mocks.isEmpty then Nil
+    else
+      val known = mocks.map(_.name).toSet
+      sourceLines.zipWithIndex.flatMap { (line, idx) =>
+        MockTag.refs(line).collect {
+          case ref if !known.contains(ref.name) =>
+            val range = new Range(new Position(idx, ref.start), new Position(idx, ref.end))
+            new Diagnostic(
+              range,
+              s"@mock: no catalog entry named '${ref.name}'. Add it to the suite's mockCatalog, or fix the name.",
+              DiagnosticSeverity.Warning,
+              "zio-bdd"
+            )
+        }
+      }.toList
 
   private def stepTypeToKeyword(st: StepType): String = st match
     case StepType.GivenStep => "Given"

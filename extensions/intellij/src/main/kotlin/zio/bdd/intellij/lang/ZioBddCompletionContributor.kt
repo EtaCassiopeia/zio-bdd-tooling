@@ -137,6 +137,11 @@ class ZioBddCompletionContributor : CompletionContributor() {
             val linePrefix = document.getText(TextRange(lineStart, offset))
             val trimmed    = linePrefix.trim()
 
+            // Inside a @mock(...) tag, offer the discovered catalog names instead of tags.
+            if (KtMockTag.isInsideMockCall(linePrefix)) {
+                addMockCatalog(parameters.position.project, result, linePrefix)
+                return
+            }
             if (trimmed.startsWith("@")) {
                 // The "@" the user already typed is part of the prefix, so the
                 // lookup ("@auth") replaces it instead of doubling to "@@auth".
@@ -148,6 +153,19 @@ class ZioBddCompletionContributor : CompletionContributor() {
             // Step lines are handled by StepCompletionProvider.
             if (stepKeywords.any { trimmed == it || trimmed.startsWith("$it ") }) return
             addStructural(trimmed, result)
+        }
+
+        // Catalog-name completion inside @mock(...). The catalog is populated by the
+        // BSP class-load (no static-scan fallback), so it is empty until the first
+        // background refresh runs — completion then starts offering names.
+        private fun addMockCatalog(project: Project, result: CompletionResultSet, linePrefix: String) {
+            if (DumbService.isDumb(project)) return
+            val matched = result.withPrefixMatcher(KtMockTag.partialAtCaret(linePrefix))
+            ZioBddStepCache.getInstance(project).getMockCatalog().forEach { m ->
+                matched.addElement(
+                    LookupElementBuilder.create(m.name).withTypeText("@mock (${m.sourceKind})")
+                )
+            }
         }
 
         private fun addTags(project: Project, result: CompletionResultSet) {

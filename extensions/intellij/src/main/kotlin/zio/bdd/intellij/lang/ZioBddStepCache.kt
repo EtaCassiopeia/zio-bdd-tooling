@@ -14,6 +14,11 @@ class ZioBddStepCache(private val project: Project) {
     // a partially-populated map during a refresh.
     @Volatile private var snapshot: Map<String, List<KtStepDefinition>> = emptyMap()
 
+    // The discovered @mock(name) catalog — a workspace-global fact from the BSP
+    // subprocess (there is no static-scan fallback: the catalog is a Scala map,
+    // not a source pattern). Empty until the first BSP class-load completes.
+    @Volatile private var mockSnapshot: List<KtMockSummary> = emptyList()
+
     private val lastScan   = AtomicLong(0L)
     private val refreshing = AtomicBoolean(false)
 
@@ -25,6 +30,12 @@ class ZioBddStepCache(private val project: Project) {
     fun getStepDefinitions(): List<KtStepDefinition> {
         if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
         return snapshot.values.flatten()
+    }
+
+    /** The discovered `@mock(name)` catalog entries (empty until a BSP class-load runs). */
+    fun getMockCatalog(): List<KtMockSummary> {
+        if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
+        return mockSnapshot
     }
 
     /** Blocking warm-up for callers (e.g. tool window) that need the cache before proceeding. */
@@ -52,7 +63,8 @@ class ZioBddStepCache(private val project: Project) {
     }
 
     fun invalidate() {
-        snapshot  = emptyMap()
+        snapshot     = emptyMap()
+        mockSnapshot = emptyList()
         lastScan.set(0L)
     }
 
@@ -126,12 +138,12 @@ class ZioBddStepCache(private val project: Project) {
         // 1. Static scan: collects file + line info for goto-definition and hover.
         val fresh = staticScan()
 
-        // 2. BSP class-loading: upgrade step patterns with runtime-accurate regexes.
-        //    Works once the LSP server has extracted zio-bdd-lsp.jar. If unavailable,
-        //    the static-scan patterns are used as-is.
-        val bspSteps = BspStepLoader.loadSteps(project)
-        if (!bspSteps.isNullOrEmpty()) {
-            val byKey = bspSteps.associate { s ->
+        // 2. BSP class-loading: upgrade step patterns with runtime-accurate regexes
+        //    and discover the @mock catalog. Works once the LSP server has extracted
+        //    zio-bdd-lsp.jar. If unavailable, the static-scan patterns are used as-is.
+        val bsp = BspStepLoader.loadAll(project)
+        if (bsp != null && bsp.steps.isNotEmpty()) {
+            val byKey = bsp.steps.associate { s ->
                 (s.keyword.lowercase() to runtimeLiteralKey(s.displayText)) to s
             }
             fresh.replaceAll { _, defs ->
@@ -142,6 +154,10 @@ class ZioBddStepCache(private val project: Project) {
                 }
             }
         }
+        // Replace the catalog only when this load actually found entries — like the
+        // step snapshot above, a failed or transiently-empty load must not wipe a
+        // good catalog (which would silently stop unknown-name annotations).
+        if (bsp != null && bsp.mocks.isNotEmpty()) mockSnapshot = bsp.mocks
 
         // Atomic swap — no reader ever sees a partially-populated map. Don't clobber
         // a populated cache with a transient empty scan (e.g. a background refresh

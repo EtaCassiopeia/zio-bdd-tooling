@@ -10,6 +10,12 @@ data class KtStepDefinition(
     val line: Int,
 )
 
+/** A `@mock(name)` catalog entry — mirrors zio-bdd's MockSummary(name, sourceKind). */
+data class KtMockSummary(
+    val name: String,
+    val sourceKind: String,
+)
+
 /**
  * Kotlin port of StepExtractor.scala for use inside the IntelliJ plugin JVM.
  * Mirrors the same regex patterns and expression-parsing logic so that

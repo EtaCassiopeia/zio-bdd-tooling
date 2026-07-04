@@ -2,7 +2,7 @@ package zio.bdd.lsp.handlers
 
 import org.eclipse.lsp4j.*
 import zio.*
-import zio.bdd.lsp.{ExtractorInfo, GherkinLine, StepDefinition, StepMatcher, WorkspaceIndex}
+import zio.bdd.lsp.{ExtractorInfo, GherkinLine, MockTag, StepDefinition, StepMatcher, WorkspaceIndex}
 
 /**
  * textDocument/completion for both .feature and .scala files.
@@ -31,9 +31,11 @@ object CompletionHandler:
     index: WorkspaceIndex
   ): UIO[List[CompletionItem]] =
     val line    = content.linesIterator.toList.lift(position.getLine).getOrElse("")
+    val prefix  = line.take(position.getCharacter)
     val trimmed = line.trim
     val kws     = List("Given", "When", "Then", "And", "But", "*")
-    if trimmed.startsWith("@") then tagCompletion(index)
+    if MockTag.isInsideMockCall(prefix) then mockCompletion(index)
+    else if trimmed.startsWith("@") then tagCompletion(index)
     else
       kws.find(kw => trimmed.startsWith(s"$kw ") || trimmed == kw) match
         case Some(kw) =>
@@ -64,6 +66,23 @@ object CompletionHandler:
         val withoutAt = tag.stripPrefix("@")
         item.setInsertText(withoutAt)
         item.setFilterText(withoutAt)
+        item
+      }
+    }
+
+  // ── @mock catalog-name completion ──────────────────────────────────────────
+
+  // Inside a @mock(...) tag, offer the discovered catalog entry names. The user
+  // has already typed up to the caret; the client filters by the partial name,
+  // so we insert the bare name (never a leading "@").
+  private def mockCompletion(index: WorkspaceIndex): UIO[List[CompletionItem]] =
+    index.allMocks.map { mocks =>
+      mocks.sortBy(_.name).map { m =>
+        val item = new CompletionItem(m.name)
+        item.setKind(CompletionItemKind.Value)
+        item.setDetail(s"@mock catalog (${m.sourceKind})")
+        item.setInsertText(m.name)
+        item.setFilterText(m.name)
         item
       }
     }
