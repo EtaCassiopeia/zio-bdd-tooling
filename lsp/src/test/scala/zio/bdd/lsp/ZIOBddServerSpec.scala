@@ -388,6 +388,101 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
           assertTrue(triggers.contains("@"))
       }
     ),
+    suite("inlayHint")(
+      test("advertises the inlayHint capability") {
+        for
+          server <- makeServer
+          result <- ZIO.attempt(server.initialize(new InitializeParams())).orDie
+          init   <- ZIO.fromCompletableFuture(result)
+        yield
+          val cap = init.getCapabilities.getInlayHintProvider
+          assertTrue(cap != null, cap.isLeft, cap.getLeft)
+      },
+      test("emits sets/reads hints with a back-reference to the producing step") {
+        val steps =
+          """|Given("an order " / string) { id =>
+             |  Stage.put(OrderId(id))
+             |}
+             |When("it is shipped") {
+             |  Stage.get[OrderId].flatMap(_ => ScenarioContext.update(_.copy(shipped = true)))
+             |}
+             |""".stripMargin
+        val feature =
+          """|Feature: Shipping
+             |  Scenario: ship it
+             |    Given an order "A1"
+             |    When it is shipped
+             |""".stripMargin
+        val sFile = "/fake/ShipSteps.scala"
+        val fFile = "/fake/ship.feature"
+        val fUri  = s"file://$fFile"
+        for
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexScalaFile(sFile, steps)
+          _      <- index.indexFeatureFile(fFile, feature)
+          server <- ZIO.service[ZIOBddServer]
+          _      <- server.putContent(fUri, feature)
+          _      <- server.forceReady
+          params = new InlayHintParams(
+                     new TextDocumentIdentifier(fUri),
+                     new Range(new Position(0, 0), new Position(100, 0))
+                   )
+          hints <- ZIO.fromCompletableFuture(server.inlayHint(params))
+        yield
+          val labels = hints.asScala.toList.map(h => (h.getPosition.getLine, h.getLabel.getLeft))
+          assertTrue(
+            // "Given an order" is line 2 (0-based): produces Stage[OrderId]
+            labels.exists((ln, l) => ln == 2 && l == "sets Stage[OrderId]"),
+            // "When it is shipped" is line 3: reads Stage[OrderId] set by step 1, and sets shipped
+            labels.exists((ln, l) => ln == 3 && l.contains("reads Stage[OrderId] (← set by step 1)")),
+            labels.exists((ln, l) => ln == 3 && l.contains("sets shipped")),
+            // hints sit at end-of-line (character > 0)
+            hints.asScala.forall(_.getPosition.getCharacter > 0)
+          )
+      },
+      test("emits at most one hint per line for a Scenario Outline (no stacked duplicates)") {
+        val steps =
+          """|Given("a number " / int) { n =>
+             |  Stage.put(Num(n))
+             |}
+             |Then("the result is set") {
+             |  ScenarioContext.update(_.copy(result = 0))
+             |}
+             |""".stripMargin
+        val feature =
+          """|Feature: Calc
+             |  Scenario Outline: add
+             |    Given a number <n>
+             |    Then the result is set
+             |    Examples:
+             |      | n |
+             |      | 1 |
+             |      | 2 |
+             |""".stripMargin
+        val sFile = "/fake/CalcOutlineSteps.scala"
+        val fFile = "/fake/calc-outline.feature"
+        val fUri  = s"file://$fFile"
+        for
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexScalaFile(sFile, steps)
+          _      <- index.indexFeatureFile(fFile, feature)
+          server <- ZIO.service[ZIOBddServer]
+          _      <- server.putContent(fUri, feature)
+          _      <- server.forceReady
+          params = new InlayHintParams(
+                     new TextDocumentIdentifier(fUri),
+                     new Range(new Position(0, 0), new Position(100, 0))
+                   )
+          hints <- ZIO.fromCompletableFuture(server.inlayHint(params))
+        yield
+          val lines = hints.asScala.toList.map(_.getPosition.getLine)
+          assertTrue(
+            lines == lines.distinct, // no stacked duplicate on the shared outline lines
+            lines.contains(2),       // the two outline step lines each get exactly one hint
+            lines.contains(3)
+          )
+      }
+    ),
     suite("codeAction")(
       test("offers skeleton action for an unmatched step diagnostic") {
         val diag = new Diagnostic(
