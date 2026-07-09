@@ -34,6 +34,34 @@ object SuiteExtractorSpec extends ZIOSpecDefault:
     test("ignores source with no @Suite annotation") {
       assertTrue(SuiteExtractor.extractFromSource("object NotASuite extends ZIOSteps[Any, S]").isEmpty)
     },
+    test("binds to the real object even when a comment mentions object/class tokens (#55)") {
+      // The declaration search is anchored to immediately after @Suite, so a decl
+      // keyword inside an intervening comment is not grabbed by mistake.
+      val src =
+        """@Suite(featureDirs = Array("f/x"))
+          |// helper builds an internal `object Foo` and a `class Bar`
+          |/* another object Baz mentioned here */
+          |object RealSuite extends ZIOSteps[Any, S]
+          |""".stripMargin
+      assertTrue(SuiteExtractor.extractFromSource(src) == List(SuiteDecl("RealSuite", List("f/x"))))
+    },
+    test("binds to the immediately-following declaration (Scala annotation semantics)") {
+      // @Suite annotates the next declaration; if that is a trait, that is what it
+      // binds to — the extractor must not skip ahead to a later object.
+      val src =
+        """@Suite(featureDirs = Array("f/a"))
+          |trait Helper
+          |object A extends ZIOSteps[Any, S]
+          |""".stripMargin
+      assertTrue(SuiteExtractor.extractFromSource(src) == List(SuiteDecl("Helper", List("f/a"))))
+    },
+    test("drops a @Suite that is not on a class/object/trait declaration") {
+      val src =
+        """@Suite(featureDirs = Array("f/a"))
+          |val notASuite = 42
+          |""".stripMargin
+      assertTrue(SuiteExtractor.extractFromSource(src).isEmpty)
+    },
     test("resolves the owner by directory containment") {
       val suites = List(
         SuiteDecl("CalculatorSuite", List("src/test/resources/features/calculator")),

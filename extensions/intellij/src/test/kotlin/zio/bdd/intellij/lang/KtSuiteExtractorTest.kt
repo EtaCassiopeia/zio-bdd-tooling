@@ -46,6 +46,43 @@ class KtSuiteExtractorTest {
     }
 
     @Test
+    fun bindsToRealObjectDespiteCommentMentioningDeclTokens() {
+        // The declaration search is anchored to immediately after @Suite, so an
+        // `object`/`class` token inside an intervening comment is not grabbed (#55).
+        val src =
+            """
+            @Suite(featureDirs = Array("f/x"))
+            // helper builds an internal object Foo and a class Bar
+            /* another object Baz mentioned here */
+            object RealSuite extends ZIOSteps[Any, S]
+            """.trimIndent()
+        val suites = KtSuiteExtractor.extractFromSource(src)
+        assertEquals(listOf(KtSuiteDecl("RealSuite", listOf("f/x"))), suites)
+    }
+
+    @Test
+    fun bindsToImmediatelyFollowingDeclaration() {
+        // @Suite annotates the next declaration; a trait there binds to the trait.
+        val src =
+            """
+            @Suite(featureDirs = Array("f/a"))
+            trait Helper
+            object A extends ZIOSteps[Any, S]
+            """.trimIndent()
+        assertEquals(listOf(KtSuiteDecl("Helper", listOf("f/a"))), KtSuiteExtractor.extractFromSource(src))
+    }
+
+    @Test
+    fun dropsSuiteNotOnADeclaration() {
+        val src =
+            """
+            @Suite(featureDirs = Array("f/a"))
+            val notASuite = 42
+            """.trimIndent()
+        assertTrue(KtSuiteExtractor.extractFromSource(src).isEmpty())
+    }
+
+    @Test
     fun resolvesOwningSuiteByDirectoryContainment() {
         val suites = listOf(
             KtSuiteDecl("CalculatorSuite", listOf("src/test/resources/features/calculator")),
