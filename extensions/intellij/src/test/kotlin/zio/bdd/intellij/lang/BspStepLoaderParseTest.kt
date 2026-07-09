@@ -60,4 +60,17 @@ class BspStepLoaderParseTest : BasePlatformTestCase() {
         assertEquals(1, steps.size)
         assertEquals("${bs}u007b", steps[0].pattern)
     }
+
+    fun testUnrecognizedObjectCountIsZeroForWellFormedAndEmptyEnvelopes() {
+        assertEquals(0, BspStepLoader.unrecognizedObjectCount(envelope))
+        assertEquals(0, BspStepLoader.unrecognizedObjectCount("""{"steps":[],"mocks":[]}"""))
+    }
+
+    fun testUnrecognizedObjectCountFlagsAnUnparseableObject() {
+        // An object that is neither a step nor a mock used to be dropped silently (#47).
+        val json =
+            """{"steps":[{"keyword":"Given","pattern":"^x$","displayText":"x"}],""" +
+                """"mocks":[{"name":"svc","sourceKind":"Dsl"}],"junk":[{"bogus":"1"}]}"""
+        assertEquals(1, BspStepLoader.unrecognizedObjectCount(json))
+    }
 }
