@@ -19,6 +19,10 @@ class ZioBddStepCache(private val project: Project) {
     // not a source pattern). Empty until the first BSP class-load completes.
     @Volatile private var mockSnapshot: List<KtMockSummary> = emptyList()
 
+    // @Suite(featureDirs=...) declarations from the source scan. Used to resolve the
+    // single owning suite for a feature file (so the run targets it, not "*").
+    @Volatile private var suiteIndex: List<KtSuiteDecl> = emptyList()
+
     private val lastScan   = AtomicLong(0L)
     private val refreshing = AtomicBoolean(false)
 
@@ -56,23 +60,31 @@ class ZioBddStepCache(private val project: Project) {
      * then schedules the full refresh to upgrade patterns in the background.
      */
     fun ensureStaticWarmed() {
-        if (snapshot.isNotEmpty()) return
-        val fresh = staticScan()
+        if (snapshot.isNotEmpty() && suiteIndex.isNotEmpty()) return
+        val (fresh, suites) = staticScan()
         if (fresh.isNotEmpty()) snapshot = fresh
+        if (suites.isNotEmpty()) suiteIndex = suites
         if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
     }
 
     fun invalidate() {
         snapshot     = emptyMap()
         mockSnapshot = emptyList()
+        suiteIndex   = emptyList()
         lastScan.set(0L)
     }
 
-    /** Returns the sbt test selector (e.g. `"*CalculatorSuite*"`) for the suite(s)
-     *  whose step definitions match at least one step in [featureFile].
-     *  Falls back to `"*"` when the cache is empty or nothing matches. */
+    /** Returns the sbt test selector (e.g. `"*CalculatorSuite*"`) that owns
+     *  [featureFile]. Prefers the suite whose `@Suite(featureDirs=...)` contains the
+     *  feature — a single, correct target — and falls back to step-definition
+     *  matching, then `"*"` only as a last resort. Warms the source scan synchronously
+     *  first so a cold cache never causes the run to fan out across every suite (#41). */
     fun suiteNamesForFeature(featureFile: VirtualFile): String {
+        ensureStaticWarmed()
         if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
+        // Authoritative: the suite that declares this feature's directory owns it.
+        KtSuiteExtractor.ownerFor(featureFile.path, project.basePath, suiteIndex)?.let { return "*$it*" }
+        // Fallback for projects without discoverable @Suite annotations.
         val current = snapshot
         if (current.isEmpty()) return "*"
         val steps = extractFeatureSteps(featureFile)
@@ -118,25 +130,29 @@ class ZioBddStepCache(private val project: Project) {
         }
     }
 
-    // Source-only scan: collects file + line info for goto-definition, hover, and
-    // completion. Fast (file read + regex) — no subprocess.
-    private fun staticScan(): MutableMap<String, List<KtStepDefinition>> {
-        val fresh = mutableMapOf<String, List<KtStepDefinition>>()
+    // Source-only scan: collects step definitions (file + line for goto/hover/
+    // completion) and @Suite declarations in a single pass. Fast (file read +
+    // regex) — no subprocess.
+    private fun staticScan(): Pair<MutableMap<String, List<KtStepDefinition>>, List<KtSuiteDecl>> {
+        val fresh  = mutableMapOf<String, List<KtStepDefinition>>()
+        val suites = mutableListOf<KtSuiteDecl>()
         try {
             scalaFiles().forEach { vf ->
                 try {
                     val content = String(vf.contentsToByteArray(), vf.charset)
                     val defs    = KtStepExtractor.extractFromSource(content, vf.path)
                     if (defs.isNotEmpty()) fresh[vf.path] = defs
+                    suites += KtSuiteExtractor.extractFromSource(content)
                 } catch (_: Exception) {}
             }
         } catch (_: Exception) {}
-        return fresh
+        return fresh to suites
     }
 
     private fun doRefresh() {
-        // 1. Static scan: collects file + line info for goto-definition and hover.
-        val fresh = staticScan()
+        // 1. Static scan: step definitions (goto/hover) and @Suite ownership.
+        val (fresh, suites) = staticScan()
+        if (suites.isNotEmpty() || suiteIndex.isEmpty()) suiteIndex = suites
 
         // 2. BSP class-loading: upgrade step patterns with runtime-accurate regexes
         //    and discover the @mock catalog. Works once the LSP server has extracted
