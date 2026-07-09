@@ -31,11 +31,12 @@ object StepExtractor:
     stepCallRe
       .findAllMatchIn(content)
       .flatMap { m =>
-        val kw       = m.group(1)
-        val startPos = m.end
-        val exprText = extractExpr(content, startPos)
-        val lineNo   = content.take(m.start).count(_ == '\n')
-        parseExpr(kw, exprText, filePath, lineNo)
+        val kw                 = m.group(1)
+        val startPos           = m.end
+        val (exprText, endPos) = extractExpr(content, startPos)
+        val lineNo             = content.take(m.start).count(_ == '\n')
+        val flow               = StepDataFlow.bodyAfter(content, endPos).map(StepDataFlow.analyze).getOrElse(DataFlow.empty)
+        parseExpr(kw, exprText, filePath, lineNo, flow)
       }
       .toList
 
@@ -44,7 +45,7 @@ object StepExtractor:
    * matching `)` of the step keyword call's first argument). Stops at the
    * closing `)` that matches the opening `(` before the expression.
    */
-  private def extractExpr(content: String, startPos: Int): String =
+  private def extractExpr(content: String, startPos: Int): (String, Int) =
     var depth = 1
     var i     = startPos
     val sb    = new StringBuilder
@@ -54,7 +55,7 @@ object StepExtractor:
         case ')' => depth -= 1; if depth > 0 then sb.append(')')
         case c   => sb.append(c)
       i += 1
-    sb.toString.trim
+    (sb.toString.trim, i)
 
   /**
    * Parse the expression text into literals and extractors. The expression is
@@ -66,7 +67,8 @@ object StepExtractor:
     kw: String,
     expr: String,
     file: String,
-    line: Int
+    line: Int,
+    dataFlow: DataFlow
   ): Option[StepDefinition] =
     // First pull out the leading string literal
     val (leadingLiteral, rest) = expr.trim match
@@ -108,7 +110,8 @@ object StepExtractor:
         pattern = buildPattern(lits, exts),
         file = file,
         line = line,
-        isStateInjecting = kw.endsWith("S")
+        isStateInjecting = kw.endsWith("S"),
+        dataFlow = dataFlow
       )
     )
 

@@ -116,5 +116,24 @@ object StepExtractorSpec extends ZIOSpecDefault:
         pattern.matches("1.5"),
         !pattern.matches("1.2.3")
       )
+    },
+    test("captures the step body and derives its reads/sets data-flow") {
+      val src =
+        """object CalcSteps extends ZIOSteps[Any, S]:
+          |  Given("a fresh calculator") { ScenarioContext.update(_.copy(result = 0)) }
+          |  When("I add " / int / " and " / int) { (a: Int, b: Int) =>
+          |    Stage.put(Sum(a + b)) *> ScenarioContext.update(_.copy(result = a + b))
+          |  }
+          |  Then("nothing stateful here") { ZIO.unit }
+        """.stripMargin
+      val defs      = StepExtractor.extractFromSource(src, "S.scala")
+      val givenStep = defs.find(_.keyword == "Given").get
+      val whenStep  = defs.find(_.keyword == "When").get
+      val thenStep  = defs.find(_.keyword == "Then").get
+      assertTrue(
+        givenStep.dataFlow.sets == Set[DataRef](DataRef.StateField("result")),
+        whenStep.dataFlow.sets == Set[DataRef](DataRef.StateField("result"), DataRef.StageType("Sum")),
+        thenStep.dataFlow.isEmpty
+      )
     }
   )
