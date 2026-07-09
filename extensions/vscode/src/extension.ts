@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
 import {
+  InlayHintRequest,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
@@ -15,6 +16,21 @@ import { ScenarioExplorerProvider } from './sidebarProvider';
 let client: LanguageClient | undefined;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
+
+/** Whether step data-flow inlay hints (#60) are enabled; off by default. */
+function stepDataFlowHintsEnabled(): boolean {
+  return vscode.workspace.getConfiguration('zio-bdd').get<boolean>('stepDataFlowHints.enabled', false);
+}
+
+/** Ask VS Code to re-query inlay hints for the visible editors (used when the toggle flips).
+ *  No-op until the server has registered the inlay-hints provider. */
+function refreshInlayHints(): void {
+  if (!client) return;
+  const feature = client.getFeature(InlayHintRequest.method);
+  for (const editor of vscode.window.visibleTextEditors) {
+    feature.getProvider(editor.document)?.onDidChangeInlayHints.fire();
+  }
+}
 
 export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('zio-bdd');
@@ -61,6 +77,16 @@ export function activate(context: vscode.ExtensionContext): void {
     synchronize: {
       fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{feature,scala}'),
     },
+    middleware: {
+      // Step data-flow inlay hints (#60) are opt-in. The server always serves them; the
+      // client decides whether to show them, gated on zio-bdd.stepDataFlowHints.enabled.
+      // (VS Code already suppresses all inlay hints when editor.inlayHints.enabled is off,
+      // so this middleware isn't even reached in that case.)
+      provideInlayHints: (document, viewPort, token, next) => {
+        if (!stepDataFlowHintsEnabled()) return [];
+        return next(document, viewPort, token);
+      },
+    },
   };
 
   client = new LanguageClient(
@@ -78,6 +104,15 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBarItem.text = '$(error) zio-bdd: error';
     outputChannel.appendLine(`zio-bdd LSP failed to start: ${err.message}`);
   });
+
+  // Toggle step data-flow inlay hints live: flipping the setting fires the inlay-hints
+  // provider's change event so VS Code re-queries and the middleware re-reads the setting,
+  // showing/hiding hints without a window reload.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('zio-bdd.stepDataFlowHints.enabled')) refreshInlayHints();
+    })
+  );
 
   // Handler for "▶ Run" code-lens buttons emitted by the LSP server.
   context.subscriptions.push(

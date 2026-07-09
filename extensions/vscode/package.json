@@ -108,6 +108,11 @@
           "enum": ["off", "error", "warn", "info", "debug"],
           "default": "info",
           "description": "LSP server log verbosity."
+        },
+        "zio-bdd.stepDataFlowHints.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show inline hints at the end of each feature step describing what its matched step definition reads/sets from `ScenarioContext` (State) and `Stage` (e.g. `sets result, Stage[Sum]`), with a `(← set by step N)` back-reference for reads. Best-effort static analysis. Also respects the global `#editor.inlayHints.enabled#` setting."
         }
       }
     },
@@ -125,6 +130,7 @@
     "watch": "npm run bundle -- --watch",
     "package": "vsce package",
     "test:schema": "node test/schema.test.mjs",
+    "test:config": "node test/dataflow-hints.test.mjs",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

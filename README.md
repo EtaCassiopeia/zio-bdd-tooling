@@ -8,7 +8,7 @@ Language tooling for [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) — the
 - **Diagnostics** — unmatched steps highlighted with closest-match hints
 - **Go-to-definition** — Cmd+Click a step → jump to the Scala source line
 - **Hover** — parameter types and extractor names for matched steps
-- **Step data-flow hints** *(IntelliJ, off by default)* — an end-of-line hint showing what each step reads/sets from `ScenarioContext` (State) and `Stage`, e.g. `sets result, Stage[Sum]`. Best-effort static analysis of the matched step's body (inline usage only). Toggle in **Settings → Editor → Inlay Hints → zio-bdd**
+- **Step data-flow hints** *(off by default)* — an end-of-line hint showing what each step reads/sets from `ScenarioContext` (State) and `Stage`, e.g. `sets result, Stage[Sum]`; reads carry a `(← set by step N)` back-reference to the earlier producing step. Best-effort static analysis of the matched step's body (inline usage only). Toggle in IntelliJ via **Settings → Editor → Inlay Hints → zio-bdd**, and in VS Code via the `zio-bdd.stepDataFlowHints.enabled` setting (both respect the editor's global inlay-hints setting)
 - **Completion** — step suggestions in `.feature` files; step skeletons in `.scala` files
 - **Quick-fix** — "Create step definition" generates a `{ ??? }` stub in the target Scala file
 - **Run configurations** — gutter ▶ icons and right-click → run a specific scenario (IntelliJ); Test Explorer integration (VS Code)
@@ -111,6 +111,7 @@ The IntelliJ plugin has a full native PSI implementation — no external plugins
 | Diagnostics | LSP server | `ZioBddAnnotator` |
 | Completion | LSP server | `ZioBddCompletionContributor` |
 | Quick-fix | LSP server (code action) | `ZioBddGenerateStepFix` |
+| Step data-flow hints | LSP `inlayHint` (`zio-bdd.stepDataFlowHints.enabled`) | `ZioBddDataFlowInlayProvider` (Inlay Hints settings) |
 | Run scenario | VS Code Test Explorer | Run configurations + gutter ▶ icons |
 | External plugin dependency | None | None |
 
