@@ -108,7 +108,10 @@ object StepLoaderSpec extends ZIOSpecDefault:
       assertTrue(
         json.contains("\"steps\""),
         json.contains("\"mocks\""),
-        json.contains("\"a cart with {int} items\""),
+        // Braces are escaped as \uXXXX on the wire (#40), so the raw envelope
+        // carries the escaped form, not the literal `{int}`.
+        json.contains("\"a cart with \\u007bint\\u007d items\""),
+        !json.contains("{int}"),
         json.contains("\"name\":\"userService\""),
         json.contains("\"sourceKind\":\"Dsl\"")
       )
