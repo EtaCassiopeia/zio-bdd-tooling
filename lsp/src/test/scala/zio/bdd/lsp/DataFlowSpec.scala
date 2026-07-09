@@ -6,6 +6,42 @@ object DataFlowSpec extends ZIOSpecDefault:
   import DataRef.*
 
   def spec = suite("StepDataFlow.analyze")(
+    test("state field reads via a named flatMap binder") {
+      val df = StepDataFlow.analyze(
+        "ScenarioContext.get.flatMap { state => Assertions.assertEquals(state.inputPath, expected) }"
+      )
+      assertTrue(df.reads == Set[DataRef](StateField("inputPath")), df.sets.isEmpty)
+    },
+    test("state field reads via a for-comprehension binder") {
+      val df = StepDataFlow.analyze("for { s <- ScenarioContext.get } yield s.validRows.length")
+      assertTrue(df.reads == Set[DataRef](StateField("validRows")))
+    },
+    test("state field read via an underscore placeholder") {
+      val df = StepDataFlow.analyze("ScenarioContext.get.map(_.count)")
+      assertTrue(df.reads == Set[DataRef](StateField("count")))
+    },
+    test("placeholder path treats _.copy as a write, not a read of a field named copy") {
+      val df = StepDataFlow.analyze("ScenarioContext.get.map(_.copy(count = 1))")
+      assertTrue(df.reads.isEmpty, df.sets == Set[DataRef](StateField("count")))
+    },
+    test("binder field-read scan does not leak similarly-named identifiers or .copy") {
+      // binder is `s`; `results.total` must not leak (no word boundary before the final s of
+      // `results`), and `s.copy(...)` is a write not a read (field `copy` excluded).
+      val df = StepDataFlow.analyze(
+        "ScenarioContext.get.flatMap(s => ScenarioContext.set(s.copy(total = results.total)))"
+      )
+      assertTrue(df.reads.isEmpty, df.sets == Set[DataRef](StateField("total")))
+    },
+    test("a field both read and written appears in reads and sets") {
+      val df = StepDataFlow.analyze(
+        "ScenarioContext.get.flatMap(s => ScenarioContext.update(_.copy(count = s.count + 1)))"
+      )
+      assertTrue(df.reads.contains(StateField("count")), df.sets.contains(StateField("count")))
+    },
+    test("nested and chained .copy sets capture every field") {
+      val df = StepDataFlow.analyze("_.copy(a = 1).copy(inner = inner.copy(b = 2))")
+      assertTrue(df.sets == Set[DataRef](StateField("a"), StateField("inner"), StateField("b")))
+    },
     test("multiple state field sets from one .copy") {
       val df = StepDataFlow.analyze("ScenarioContext.update(_.copy(result = a + b, failed = false))")
       assertTrue(

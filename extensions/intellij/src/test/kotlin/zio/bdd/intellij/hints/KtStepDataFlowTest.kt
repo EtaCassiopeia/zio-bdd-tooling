@@ -7,6 +7,58 @@ import org.junit.Test
 class KtStepDataFlowTest {
 
     @Test
+    fun readsStateFieldViaNamedFlatMapBinder() {
+        val df = KtStepDataFlow.analyze(
+            "ScenarioContext.get.flatMap { state => Assertions.assertEquals(state.inputPath, expected) }",
+        )
+        assertEquals(setOf(DataRef.StateField("inputPath")), df.reads)
+        assertTrue(df.sets.isEmpty())
+    }
+
+    @Test
+    fun readsStateFieldViaForComprehensionBinder() {
+        val df = KtStepDataFlow.analyze("for { s <- ScenarioContext.get } yield s.validRows.length")
+        assertEquals(setOf(DataRef.StateField("validRows")), df.reads)
+    }
+
+    @Test
+    fun readsStateFieldViaUnderscorePlaceholder() {
+        val df = KtStepDataFlow.analyze("ScenarioContext.get.map(_.count)")
+        assertEquals(setOf(DataRef.StateField("count")), df.reads)
+    }
+
+    @Test
+    fun placeholderTreatsCopyAsWriteNotReadOfFieldNamedCopy() {
+        val df = KtStepDataFlow.analyze("ScenarioContext.get.map(_.copy(count = 1))")
+        assertTrue(df.reads.isEmpty())
+        assertEquals(setOf(DataRef.StateField("count")), df.sets)
+    }
+
+    @Test
+    fun binderReadScanDoesNotLeakSimilarNamesOrCopy() {
+        val df = KtStepDataFlow.analyze(
+            "ScenarioContext.get.flatMap(s => ScenarioContext.set(s.copy(total = results.total)))",
+        )
+        assertTrue(df.reads.isEmpty())
+        assertEquals(setOf(DataRef.StateField("total")), df.sets)
+    }
+
+    @Test
+    fun aFieldReadAndWrittenAppearsInBoth() {
+        val df = KtStepDataFlow.analyze(
+            "ScenarioContext.get.flatMap(s => ScenarioContext.update(_.copy(count = s.count + 1)))",
+        )
+        assertTrue(df.reads.contains(DataRef.StateField("count")))
+        assertTrue(df.sets.contains(DataRef.StateField("count")))
+    }
+
+    @Test
+    fun nestedAndChainedCopySetsCaptureEveryField() {
+        val df = KtStepDataFlow.analyze("_.copy(a = 1).copy(inner = inner.copy(b = 2))")
+        assertEquals(setOf(DataRef.StateField("a"), DataRef.StateField("inner"), DataRef.StateField("b")), df.sets)
+    }
+
+    @Test
     fun detectsMultipleStateFieldSetsFromOneCopy() {
         val df = KtStepDataFlow.analyze("ScenarioContext.update(_.copy(result = a + b, failed = false))")
         assertEquals(setOf(DataRef.StateField("result"), DataRef.StateField("failed")), df.sets)
