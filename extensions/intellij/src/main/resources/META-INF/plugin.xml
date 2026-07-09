@@ -19,6 +19,8 @@
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
+    <!-- Bundled JSON module: powers the Rift imposter JSON schema association below. -->
+    <depends>com.intellij.modules.json</depends>
 
     <extensions defaultExtensionNs="com.intellij">
 
@@ -101,6 +103,11 @@
                     factoryClass="zio.bdd.intellij.toolwindow.ZioBddScenarioExplorerFactory"
                     icon="/icons/feature.svg"/>
 
+    </extensions>
+
+    <!-- ── Rift imposter JSON schema (Mountebank + _rift.* extensions) ─────── -->
+    <extensions defaultExtensionNs="JavaScript.JsonSchema">
+        <ProviderFactory implementation="zio.bdd.intellij.schema.RiftImposterSchemaProviderFactory"/>
     </extensions>
 
     <actions>

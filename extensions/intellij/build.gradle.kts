@@ -28,6 +28,10 @@ dependencies {
             intellijIdeaCommunity("2024.3")
         }
 
+        // Bundled JSON module — provides the JSON-schema provider EP used to
+        // associate the Rift imposter schema (RiftImposterSchemaProviderFactory).
+        bundledPlugin("com.intellij.modules.json")
+
         testFramework(TestFrameworkType.Platform)
         zipSigner()
         pluginVerifier()

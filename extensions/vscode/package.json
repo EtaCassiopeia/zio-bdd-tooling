@@ -110,7 +110,13 @@
           "description": "LSP server log verbosity."
         }
       }
-    }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": ["*.imposter.json", "*.rift.json", "**/imposters/*.json"],
+        "url": "./schemas/rift-imposter.schema.json"
+      }
+    ]
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p ./tsconfig.json",
@@ -118,11 +124,14 @@
     "compile": "npm run typecheck && npm run bundle",
     "watch": "npm run bundle -- --watch",
     "package": "vsce package",
+    "test:schema": "node test/schema.test.mjs",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "esbuild": "^0.21.0",
     "typescript": "^5.4.0",
     "@vscode/vsce": "^2.26.0"
