@@ -59,6 +59,7 @@ final class ZIOBddServer(
     caps.setCompletionProvider(
       new CompletionOptions(false, List("Given ", "When ", "Then ", "And ", "But ", "/", "@").asJava)
     )
+    caps.setInlayHintProvider(java.lang.Boolean.TRUE)
     CompletableFuture.completedFuture(new InitializeResult(caps))
 
   override def initialized(params: InitializedParams): Unit =
@@ -149,6 +150,12 @@ final class ZIOBddServer(
   override def codeLens(params: CodeLensParams): CompletableFuture[java.util.List[? <: CodeLens]] =
     val uri = params.getTextDocument.getUri
     dispatchGated(CodeLensHandler.codeLenses(uri, currentContent(uri), index).map(_.asJava))
+
+  override def inlayHint(params: InlayHintParams): CompletableFuture[java.util.List[InlayHint]] =
+    val uri = params.getTextDocument.getUri
+    dispatchGated(
+      InlayHintHandler.inlayHints(uri, params.getRange, currentContent(uri), index).map(_.asJava)
+    )
 
   override def codeAction(
     params: CodeActionParams
