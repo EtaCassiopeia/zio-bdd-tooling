@@ -2,6 +2,8 @@ package zio.bdd.intellij.lang
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.vfs.VirtualFile
@@ -26,8 +28,14 @@ class ZioBddStepCache(private val project: Project) {
     private val lastScan   = AtomicLong(0L)
     private val refreshing = AtomicBoolean(false)
 
+    // Whether a static source scan has completed at least once. Gates the
+    // synchronous warm so a project with no discoverable @Suite (empty suiteIndex)
+    // isn't rescanned on every call — which would freeze the EDT on a large project.
+    @Volatile private var staticWarmed = false
+
     companion object {
         private const val TTL_MS = 30_000L
+        private val LOG = Logger.getInstance(ZioBddStepCache::class.java)
         fun getInstance(project: Project): ZioBddStepCache = project.service()
     }
 
@@ -60,10 +68,15 @@ class ZioBddStepCache(private val project: Project) {
      * then schedules the full refresh to upgrade patterns in the background.
      */
     fun ensureStaticWarmed() {
-        if (snapshot.isNotEmpty() && suiteIndex.isNotEmpty()) return
-        val (fresh, suites) = staticScan()
-        if (fresh.isNotEmpty()) snapshot = fresh
-        if (suites.isNotEmpty()) suiteIndex = suites
+        // Gate on whether a scan has completed, not on the maps being non-empty: a
+        // project legitimately having zero @Suite (empty suiteIndex) must not force a
+        // whole-project rescan on every call — that would freeze the EDT (#42).
+        if (!staticWarmed) {
+            val (fresh, suites) = staticScan()
+            if (fresh.isNotEmpty()) snapshot = fresh
+            if (suites.isNotEmpty()) suiteIndex = suites
+            staticWarmed = true
+        }
         if (System.currentTimeMillis() - lastScan.get() > TTL_MS) scheduleRefresh()
     }
 
@@ -71,6 +84,7 @@ class ZioBddStepCache(private val project: Project) {
         snapshot     = emptyMap()
         mockSnapshot = emptyList()
         suiteIndex   = emptyList()
+        staticWarmed = false
         lastScan.set(0L)
     }
 
@@ -143,44 +157,61 @@ class ZioBddStepCache(private val project: Project) {
                     val defs    = KtStepExtractor.extractFromSource(content, vf.path)
                     if (defs.isNotEmpty()) fresh[vf.path] = defs
                     suites += KtSuiteExtractor.extractFromSource(content)
-                } catch (_: Exception) {}
+                } catch (e: ProcessCanceledException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Skip an unreadable/unparseable file, but leave a trace so a
+                    // persistently-failing scan is diagnosable rather than silent (#42).
+                    LOG.warn("ZioBddStepCache: failed to scan ${vf.path}; skipping this file", e)
+                }
             }
-        } catch (_: Exception) {}
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: Exception) {
+            LOG.warn("ZioBddStepCache: source scan failed; step/suite index may be incomplete", e)
+        }
         return fresh to suites
     }
 
     private fun doRefresh() {
         // 1. Static scan: step definitions (goto/hover) and @Suite ownership.
+        //    Publish it BEFORE the BSP call so a BSP failure can never leave the
+        //    cache empty or stop lastScan from advancing (#42). Atomic swap — no
+        //    reader sees a partial map; a transient empty scan (e.g. run without read
+        //    access) must not clobber a populated cache.
         val (fresh, suites) = staticScan()
         if (suites.isNotEmpty() || suiteIndex.isEmpty()) suiteIndex = suites
+        if (fresh.isNotEmpty() || snapshot.isEmpty()) snapshot = fresh
+        staticWarmed = true
 
         // 2. BSP class-loading: upgrade step patterns with runtime-accurate regexes
-        //    and discover the @mock catalog. Works once the LSP server has extracted
-        //    zio-bdd-lsp.jar. If unavailable, the static-scan patterns are used as-is.
-        val bsp = BspStepLoader.loadAll(project)
-        if (bsp != null && bsp.steps.isNotEmpty()) {
-            val byKey = bsp.steps.associate { s ->
-                (s.keyword.lowercase() to runtimeLiteralKey(s.displayText)) to s
-            }
-            fresh.replaceAll { _, defs ->
-                defs.map { sd ->
-                    val key = sd.keyword.lowercase() to staticLiteralKey(sd.displayText)
-                    val rs  = byKey[key]
-                    if (rs != null) sd.copy(pattern = rs.pattern) else sd
+        //    and discover the @mock catalog. Guarded — a failure here only skips the
+        //    upgrade; the static-scan patterns published above remain. lastScan
+        //    always advances (finally) so a failed load can't hot-loop re-scheduling.
+        try {
+            val bsp = BspStepLoader.loadAll(project)
+            if (bsp != null && bsp.mocks.isNotEmpty()) mockSnapshot = bsp.mocks
+            if (bsp != null && bsp.steps.isNotEmpty()) {
+                val byKey = bsp.steps.associate { s ->
+                    (s.keyword.lowercase() to runtimeLiteralKey(s.displayText)) to s
                 }
+                // Build a fresh upgraded map and swap it in atomically rather than
+                // mutating the already-published `snapshot` in place.
+                val upgraded = fresh.mapValues { (_, defs) ->
+                    defs.map { sd ->
+                        val key = sd.keyword.lowercase() to staticLiteralKey(sd.displayText)
+                        byKey[key]?.let { sd.copy(pattern = it.pattern) } ?: sd
+                    }
+                }
+                if (upgraded.isNotEmpty()) snapshot = upgraded
             }
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: Exception) {
+            LOG.warn("ZioBddStepCache: BSP class-load failed; keeping static-scan patterns", e)
+        } finally {
+            lastScan.set(System.currentTimeMillis())
         }
-        // Replace the catalog only when this load actually found entries — like the
-        // step snapshot above, a failed or transiently-empty load must not wipe a
-        // good catalog (which would silently stop unknown-name annotations).
-        if (bsp != null && bsp.mocks.isNotEmpty()) mockSnapshot = bsp.mocks
-
-        // Atomic swap — no reader ever sees a partially-populated map. Don't clobber
-        // a populated cache with a transient empty scan (e.g. a background refresh
-        // that ran without read access); only replace when the scan found something
-        // or the cache was empty anyway.
-        if (fresh.isNotEmpty() || snapshot.isEmpty()) snapshot = fresh
-        lastScan.set(System.currentTimeMillis())
     }
 
     // "the cart has {int} items" → "the cart has  items"
