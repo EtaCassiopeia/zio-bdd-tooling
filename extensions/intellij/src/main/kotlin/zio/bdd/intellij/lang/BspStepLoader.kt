@@ -2,6 +2,7 @@ package zio.bdd.intellij.lang
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.module.ModuleManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.OrderEnumerator
 import java.io.File
@@ -30,7 +31,19 @@ object BspStepLoader {
 
     fun loadAll(project: Project): LoadResult? {
         val loaderJar = findLoaderJar() ?: return null
-        val testCp    = getTestClasspath(project)
+        // Guard the classpath computation: ModuleManager/OrderEnumerator can throw
+        // (e.g. accessed without a read action, or a transiently-invalid module), and
+        // an escaping throw here used to abort the caller's whole refresh (#42).
+        // ProcessCanceledException must propagate — swallowing it breaks platform
+        // cancellation — so rethrow it ahead of the fallback.
+        val testCp = try {
+            getTestClasspath(project)
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: Exception) {
+            LOG.warn("BspStepLoader: could not compute the test classpath; skipping runtime load", e)
+            return null
+        }
         if (testCp.isEmpty()) return null
         return runSubprocess(testCp, loaderJar)
     }

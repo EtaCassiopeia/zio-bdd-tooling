@@ -75,4 +75,44 @@ class KtSuiteExtractorTest {
             KtSuiteExtractor.ownerFor("/p/features/calculator/x.feature", "/p", suites),
         )
     }
+
+    @Test
+    fun resolvesOwnerWhenFeatureDirsIsAnExactFilePath() {
+        // Real samples (ParallelIsolationSuite/HooksOrderingSuite) declare featureDirs
+        // pointing at an exact .feature FILE, not a directory. The `feature == abs`
+        // branch must resolve these — dropping it would regress them back to "*".
+        val suites = listOf(
+            KtSuiteDecl("HooksOrderingSuite", listOf("src/test/resources/features/core/hooks_ordering.feature")),
+        )
+        assertEquals(
+            "HooksOrderingSuite",
+            KtSuiteExtractor.ownerFor("/p/src/test/resources/features/core/hooks_ordering.feature", "/p", suites),
+        )
+    }
+
+    @Test
+    fun parsesSuiteWithoutFeatureDirsAsEmpty() {
+        val src = """
+            @Suite(reporters = Array("pretty"), logLevel = "info")
+            object BareSuite extends ZIOSteps[Any, S]
+        """.trimIndent()
+        val suites = KtSuiteExtractor.extractFromSource(src)
+        assertEquals(1, suites.size)
+        assertEquals("BareSuite", suites[0].name)
+        assertTrue(suites[0].featureDirs.isEmpty())
+        assertNull(KtSuiteExtractor.ownerFor("/p/x.feature", "/p", suites))
+    }
+
+    @Test
+    fun parsesMultipleSuitesInOneFile() {
+        val src = """
+            @Suite(featureDirs = Array("f/a"))
+            object A extends ZIOSteps[Any, S]
+            @Suite(featureDirs = Array("f/b"))
+            object B extends ZIOSteps[Any, S]
+        """.trimIndent()
+        val suites = KtSuiteExtractor.extractFromSource(src)
+        assertEquals(listOf("A", "B"), suites.map { it.name })
+        assertEquals("B", KtSuiteExtractor.ownerFor("/p/f/b/x.feature", "/p", suites))
+    }
 }
