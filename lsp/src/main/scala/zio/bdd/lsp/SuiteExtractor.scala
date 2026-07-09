@@ -25,8 +25,15 @@ object SuiteExtractor:
   private val suiteAnnotation: Regex = """@Suite\s*\(""".r
   private val featureDirsRe: Regex   = """(?s)featureDirs\s*=\s*Array\s*\(([^)]*)\)""".r
   private val stringLit: Regex       = "\"([^\"]*)\"".r
-  private val declName: Regex =
-    """(?s)\b(?:object|trait|(?:final\s+|abstract\s+|sealed\s+|case\s+)*class)\s+([A-Za-z_][A-Za-z0-9_]*)""".r
+  // The declaration the annotation applies to — anchored (`^`) to *immediately*
+  // after the `@Suite(...)`, skipping only whitespace, comments, further
+  // annotations, and modifiers. Searching the whole rest of the file instead
+  // could grab an `object`/`class`/`trait` token out of an intervening comment
+  // or string (#55); `@Suite` binds to the next declaration, per Scala.
+  private val declAfterAnnotation: Regex =
+    ("""(?s)^\s*(?:(?://[^\n]*|/\*.*?\*/|@\w+(?:\([^)]*\))?)\s*)*""" +
+      """(?:(?:final|sealed|abstract|case|private|protected|open|implicit|lazy)\s+)*""" +
+      """(?:object|trait|class)\s+([A-Za-z_][A-Za-z0-9_]*)""").r
 
   def extractFromSource(content: String): List[SuiteDecl] =
     suiteAnnotation
@@ -41,7 +48,7 @@ object SuiteExtractor:
             .findFirstMatchIn(args)
             .map(md => stringLit.findAllMatchIn(md.group(1)).map(_.group(1)).toList)
             .getOrElse(Nil)
-          declName.findFirstMatchIn(content.substring(close + 1)).map(dm => SuiteDecl(dm.group(1), dirs))
+          declAfterAnnotation.findFirstMatchIn(content.substring(close + 1)).map(dm => SuiteDecl(dm.group(1), dirs))
       }
       .toList
 

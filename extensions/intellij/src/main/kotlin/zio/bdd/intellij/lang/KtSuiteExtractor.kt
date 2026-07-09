@@ -19,7 +19,17 @@ object KtSuiteExtractor {
     private val SUITE_ANNOTATION = Regex("""@Suite\s*\(""")
     private val FEATURE_DIRS = Regex("""featureDirs\s*=\s*Array\s*\(([^)]*)\)""", RegexOption.DOT_MATCHES_ALL)
     private val STRING_LITERAL = Regex("\"([^\"]*)\"")
-    private val DECL_NAME = Regex("""\b(?:object|trait|(?:final\s+|abstract\s+|sealed\s+|case\s+)*class)\s+([A-Za-z_][A-Za-z0-9_]*)""")
+    // The declaration the annotation applies to — anchored (^) to immediately after
+    // the @Suite(...), skipping only whitespace, comments, further annotations, and
+    // modifiers. Searching the whole rest of the file could grab an object/class/trait
+    // token out of an intervening comment or string (#55); @Suite binds to the next
+    // declaration, per Scala.
+    private val DECL_AFTER_ANNOTATION = Regex(
+        "^\\s*(?:(?://[^\\n]*|/\\*.*?\\*/|@\\w+(?:\\([^)]*\\))?)\\s*)*" +
+            "(?:(?:final|sealed|abstract|case|private|protected|open|implicit|lazy)\\s+)*" +
+            "(?:object|trait|class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+        RegexOption.DOT_MATCHES_ALL,
+    )
 
     fun extractFromSource(content: String): List<KtSuiteDecl> {
         val out = mutableListOf<KtSuiteDecl>()
@@ -31,7 +41,7 @@ object KtSuiteExtractor {
             val dirs = FEATURE_DIRS.find(args)?.groupValues?.get(1)
                 ?.let { inner -> STRING_LITERAL.findAll(inner).map { it.groupValues[1] }.toList() }
                 ?: emptyList()
-            val name = DECL_NAME.find(content, close + 1)?.groupValues?.get(1) ?: continue
+            val name = DECL_AFTER_ANNOTATION.find(content.substring(close + 1))?.groupValues?.get(1) ?: continue
             out += KtSuiteDecl(name, dirs)
         }
         return out
