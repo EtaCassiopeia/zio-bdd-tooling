@@ -78,5 +78,19 @@ object BspClassLoaderSpec extends ZIOSpecDefault:
       val literal = "\\u007b end \\u007d"
       val json    = StepLoader.serialize(List(("Given", literal, "x")), Nil)
       assertTrue(BspClassLoader.parseSteps(json) == List(RuntimeStepSummary("Given", literal, "x")))
+    },
+    test("unrecognizedObjectCount is 0 for a well-formed envelope") {
+      assertTrue(BspClassLoader.unrecognizedObjectCount(envelope) == 0)
+    },
+    test("unrecognizedObjectCount flags an object that is neither a step nor a mock") {
+      // A malformed/truncated object (here: neither `keyword`- nor `name`-first, and
+      // too few fields) used to be dropped silently (#47).
+      val json =
+        """{"steps":[{"keyword":"Given","pattern":"^x$","displayText":"x"}],""" +
+          """"mocks":[{"name":"svc","sourceKind":"Dsl"}],"junk":[{"bogus":"1"}]}"""
+      assertTrue(BspClassLoader.unrecognizedObjectCount(json) == 1)
+    },
+    test("unrecognizedObjectCount is 0 for an empty envelope") {
+      assertTrue(BspClassLoader.unrecognizedObjectCount("""{"steps":[],"mocks":[]}""") == 0)
     }
   ) @@ TestAspect.timeout(60.seconds)

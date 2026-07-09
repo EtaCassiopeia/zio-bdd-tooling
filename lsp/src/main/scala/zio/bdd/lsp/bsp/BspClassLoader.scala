@@ -55,7 +55,12 @@ object BspClassLoader:
               // no log, so runtime steps + the @mock catalog vanished silently (#40).
               ZIO.logWarning(s"BspClassLoader: $reason; falling back to static scan") *>
                 ZIO.succeed(RuntimeLoadResult.empty)
-            case Right(j) => ZIO.succeed(RuntimeLoadResult(parseSteps(j), parseMocks(j)))
+            case Right(j) =>
+              val dropped = unrecognizedObjectCount(j)
+              ZIO
+                .logWarning(s"BspClassLoader: dropped $dropped unrecognized JSON object(s) from the StepLoader output")
+                .when(dropped > 0) *>
+                ZIO.succeed(RuntimeLoadResult(parseSteps(j), parseMocks(j)))
           }
           .catchAllCause { cause =>
             // Fall back only for genuine failures/defects; re-raise interruption
@@ -172,6 +177,20 @@ object BspClassLoader:
           Some(RuntimeMockSummary(unescape(fields(1)), unescape(fields(3))))
         else None
       }
+
+  /**
+   * How many scanned JSON objects were recognized as neither a step nor a mock
+   * — i.e. silently dropped by both parsers (e.g. a truncated object). The
+   * caller logs when this is non-zero so a silent drop is diagnosable rather
+   * than invisible (#47).
+   */
+  private[bsp] def unrecognizedObjectCount(json: String): Int =
+    if json.isEmpty then 0
+    else
+      // Exclude envelope-marker objects: with both arrays empty the envelope has no
+      // inner braces and is itself matched as an object, which is not a dropped entry.
+      val objects = objectFields(json).filterNot(f => f.headOption.exists(h => h == "steps" || h == "mocks"))
+      math.max(0, objects.length - parseSteps(json).length - parseMocks(json).length)
 
   // Single-pass unescaper. A chain of String.replace calls cannot decode this
   // correctly: a real backslash is escaped to `\\` while a brace is escaped to a

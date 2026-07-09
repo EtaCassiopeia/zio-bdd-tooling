@@ -134,6 +134,10 @@ object BspStepLoader {
                 return null
             }
             val json = out.toString().trim()
+            val dropped = unrecognizedObjectCount(json)
+            if (dropped > 0) {
+                LOG.warn("BspStepLoader: dropped $dropped unrecognized JSON object(s) from the StepLoader output")
+            }
             LoadResult(parseSteps(json), parseMocks(json))
         } catch (e: Exception) {
             // Fall back to static-scan step definitions (and an unchanged mock catalog),
@@ -193,6 +197,16 @@ object BspStepLoader {
                 KtMockSummary(name = unescape(fields[1]), sourceKind = unescape(fields[3]))
             else null
         }
+    }
+
+    /** How many scanned JSON objects were recognized as neither a step nor a mock —
+     *  a silently-dropped entry (e.g. a truncated object). Envelope-marker objects
+     *  (first key `steps`/`mocks`, matched when both arrays are empty) are excluded.
+     *  The caller logs when this is non-zero so a silent drop is diagnosable (#47). */
+    fun unrecognizedObjectCount(json: String): Int {
+        if (json.isEmpty()) return 0
+        val objects = objectFields(json).filterNot { it.firstOrNull() == "steps" || it.firstOrNull() == "mocks" }
+        return maxOf(0, objects.size - parseSteps(json).size - parseMocks(json).size)
     }
 
     // Single-pass unescaper. A chain of String.replace calls cannot decode this
