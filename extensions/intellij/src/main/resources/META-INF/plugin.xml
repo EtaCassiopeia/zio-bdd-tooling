@@ -97,6 +97,16 @@
                 language="ZioBddGherkin"
                 implementationClass="zio.bdd.intellij.lang.ZioBddDocumentationProvider"/>
 
+        <!-- ── Step data-flow inlay hints (off by default; toggle in ──────── -->
+        <!--    Settings → Editor → Inlay Hints → zio-bdd) ─────────────────── -->
+        <codeInsight.declarativeInlayProvider
+                language="ZioBddGherkin"
+                providerId="zio.bdd.stepDataFlow"
+                implementationClass="zio.bdd.intellij.hints.ZioBddDataFlowInlayProvider"
+                isEnabledByDefault="false"
+                nameKey="inlay.zioBdd.stepDataFlow.name"
+                bundle="messages.ZioBddBundle"/>
+
         <!-- ── Scenario Explorer tool window ─────────────────────────────── -->
         <toolWindow id="Scenario Explorer"
                     anchor="left"
