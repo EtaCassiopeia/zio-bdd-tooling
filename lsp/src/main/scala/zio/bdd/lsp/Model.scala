@@ -25,7 +25,12 @@ case class StepDefinition(
   /** 0-based line number */
   line: Int,
   /** True when registered via GivenS / WhenS / ThenS / AndS / ButS */
-  isStateInjecting: Boolean
+  isStateInjecting: Boolean,
+  /**
+   * Reads/sets derived from the step body (State fields, Stage types, lens
+   * slices); #58.
+   */
+  dataFlow: DataFlow = DataFlow.empty
 )
 
 /** Metadata about a single typed extractor in a step expression. */

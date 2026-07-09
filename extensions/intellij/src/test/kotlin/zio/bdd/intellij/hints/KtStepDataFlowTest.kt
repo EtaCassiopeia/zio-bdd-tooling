@@ -72,6 +72,17 @@ class KtStepDataFlowTest {
     }
 
     @Test
+    fun copyDoesNotLeakLambdaArrowParamAsField() {
+        val df = KtStepDataFlow.analyze("_.copy(onDone = k => k, count = 1)")
+        assertEquals(setOf(DataRef.StateField("onDone"), DataRef.StateField("count")), df.sets)
+    }
+
+    @Test
+    fun stageGetOptionIsARead() {
+        assertEquals(setOf(DataRef.StageType("Payload")), KtStepDataFlow.analyze("Stage.getOption[Payload].map(f)").reads)
+    }
+
+    @Test
     fun emptyForABodyWithNoStateOrStage() {
         assertTrue(KtStepDataFlow.analyze("ZIO.unit").isEmpty())
     }

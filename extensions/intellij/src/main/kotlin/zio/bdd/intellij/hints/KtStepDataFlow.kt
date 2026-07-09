@@ -51,8 +51,8 @@ object KtStepDataFlow {
     // Stage.put[T](…) or Stage.put(Type(...)) — the staged type.
     private val STAGE_PUT = Regex("""Stage\.put\s*(?:\[\s*([A-Za-z_][\w.]*)\s*])?\s*\(\s*([^)]*)""")
 
-    // Stage.get[T] / Stage.getOrElse[T] — the retrieved type (explicit type arg).
-    private val STAGE_GET = Regex("""Stage\.(?:get|getOrElse)\s*\[\s*([A-Za-z_][\w.]*)\s*]""")
+    // Stage.get[T] / getOrElse[T] / getOption[T] — the retrieved type (explicit type arg).
+    private val STAGE_GET = Regex("""Stage\.(?:get|getOrElse|getOption)\s*\[\s*([A-Za-z_][\w.]*)\s*]""")
 
     // ScenarioLens.<method>[S, Slice] — method (1st group) decides read vs write, slice = 2nd type arg.
     private val LENS = Regex("""ScenarioLens\.(\w+)\s*\[\s*[A-Za-z_][\w.]*\s*,\s*([A-Za-z_][\w.]*)\s*]""")
@@ -119,7 +119,7 @@ object KtStepDataFlow {
                     if (depth == 0) return fields
                 }
                 depth == 1 && c == '=' &&
-                    s.getOrNull(i + 1) != '=' && s.getOrNull(i - 1) != '=' &&
+                    s.getOrNull(i + 1) != '=' && s.getOrNull(i + 1) != '>' && s.getOrNull(i - 1) != '=' &&
                     s.getOrNull(i - 1) != '!' && s.getOrNull(i - 1) != '<' && s.getOrNull(i - 1) != '>' ->
                     identBefore(s, i)?.let { fields += it }
             }
