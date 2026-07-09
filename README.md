@@ -12,6 +12,7 @@ Language tooling for [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) — the
 - **Quick-fix** — "Create step definition" generates a `{ ??? }` stub in the target Scala file
 - **Run configurations** — gutter ▶ icons and right-click → run a specific scenario (IntelliJ); Test Explorer integration (VS Code)
 - **BSP integration** — after each `sbt compile`, runtime-accurate step patterns are loaded from the user's compiled classes via a subprocess; no approximation from source text
+- **Rift imposter JSON schema** — validation and completion for [Rift](https://github.com/EtaCassiopeia/zio-bdd) / Mountebank-compatible imposter files (including `_rift.*` extensions). Applies to files named `*.imposter.json` or `*.rift.json`, and any `.json` under an `imposters/` directory. Wired via VS Code `jsonValidation` and an IntelliJ JSON schema provider; the schema lives at [`extensions/vscode/schemas/rift-imposter.schema.json`](extensions/vscode/schemas/rift-imposter.schema.json)
 - **CLI** — `zio-bdd check` / `snippet` / `list` for CI workflows and scripting
 
 No compile step required. Static source scanning gives instant feedback; BSP upgrades accuracy after each build.

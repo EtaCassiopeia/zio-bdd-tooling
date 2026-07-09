@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/EtaCassiopeia/zio-bdd-tooling/main/extensions/vscode/schemas/rift-imposter.schema.json",
+  "title": "Rift imposter",
+  "description": "A Rift / Mountebank-compatible imposter document (POST /imposters body) with zio-bdd Rift's `_rift.*` extensions. Used by NativeSpec.Rift(imposterJson) and raw MockSource files.",
+  "type": "object",
+  "required": ["protocol"],
+  "additionalProperties": true,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535,
+      "description": "TCP port to bind. 0 (or omitted) asks Rift for an ephemeral port."
+    },
+    "protocol": {
+      "type": "string",
+      "enum": ["http", "https", "tcp", "smtp"],
+      "description": "Wire protocol served by this imposter."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable label for the imposter (shown in logs / the Rift UI)."
+    },
+    "recordRequests": {
+      "type": "boolean",
+      "description": "When true, Rift records matched requests for later inspection (received/verify)."
+    },
+    "defaultResponse": {
+      "type": "object",
+      "description": "Response served when no stub matches. zio-bdd pins this to { statusCode: 404 } for cross-adapter parity.",
+      "additionalProperties": true,
+      "properties": {
+        "statusCode": { "type": "integer" },
+        "headers": { "type": "object" },
+        "body": {}
+      }
+    },
+    "stubs": {
+      "type": "array",
+      "description": "Ordered list of stubs; the first whose predicates all match wins.",
+      "items": { "$ref": "#/definitions/stub" }
+    },
+    "_rift": {
+      "$ref": "#/definitions/riftImposterExt"
+    }
+  },
+  "definitions": {
+    "stub": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "description": "Optional stable stub id." },
+        "predicates": {
+          "type": "array",
+          "description": "Predicates ANDed together; the stub matches only when all pass.",
+          "items": { "$ref": "#/definitions/predicate" }
+        },
+        "responses": {
+          "type": "array",
+          "description": "Responses served in round-robin as the stub matches repeatedly.",
+          "items": { "$ref": "#/definitions/response" }
+        },
+        "scenarioName": {
+          "type": "string",
+          "description": "_rift declarative-scenario FSM name (rift#190). The stub is eligible only in the matching scenario state."
+        },
+        "requiredScenarioState": {
+          "type": "string",
+          "description": "State the (flow_id, scenarioName) FSM must be in for this stub to be eligible."
+        },
+        "newScenarioState": {
+          "type": "string",
+          "description": "State to transition to after serving. Omit to stay in the current state."
+        }
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "description": "A Mountebank predicate. Operator keys (equals, deepEquals, contains, matches, startsWith, endsWith, exists) map request fields (method, path, query, headers, body); and/or/not compose sub-predicates.",
+      "additionalProperties": true,
+      "properties": {
+        "equals": { "type": "object" },
+        "deepEquals": { "type": "object" },
+        "contains": { "type": "object" },
+        "startsWith": { "type": "object" },
+        "endsWith": { "type": "object" },
+        "matches": { "type": "object" },
+        "exists": { "type": "object" },
+        "not": { "$ref": "#/definitions/predicate" },
+        "and": { "type": "array", "items": { "$ref": "#/definitions/predicate" } },
+        "or": { "type": "array", "items": { "$ref": "#/definitions/predicate" } },
+        "caseSensitive": { "type": "boolean" }
+      }
+    },
+    "response": {
+      "type": "object",
+      "description": "A stub response: `is` (canned), `proxy`, or `inject`, optionally with Mountebank `_behaviors` and Rift `_rift` extensions.",
+      "additionalProperties": true,
+      "properties": {
+        "is": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "statusCode": { "type": "integer" },
+            "headers": { "type": "object" },
+            "body": {}
+          }
+        },
+        "proxy": { "type": "object" },
+        "inject": { "type": "string" },
+        "_behaviors": { "type": "object" },
+        "_rift": { "$ref": "#/definitions/riftResponseExt" }
+      }
+    },
+    "riftImposterExt": {
+      "type": "object",
+      "description": "zio-bdd Rift imposter-level extensions.",
+      "additionalProperties": true,
+      "properties": {
+        "flowState": {
+          "type": "object",
+          "description": "Backs declarative scenarios (rift#190): where per-flow FSM state lives and how a request's flow id is derived.",
+          "additionalProperties": true,
+          "properties": {
+            "backend": { "type": "string", "description": "Flow-state store, e.g. \"inmemory\"." },
+            "ttlSeconds": { "type": "integer", "description": "How long idle flow state is retained." },
+            "flowIdSource": {
+              "type": "string",
+              "description": "How the flow id is resolved: \"imposter_port\" (PerInstance) or \"header:<name>\" (Correlated)."
+            }
+          }
+        }
+      }
+    },
+    "riftResponseExt": {
+      "type": "object",
+      "description": "zio-bdd Rift response-level extensions.",
+      "additionalProperties": true,
+      "properties": {
+        "fault": {
+          "type": "object",
+          "description": "Fault injection (rift#239). `tcp` aborts the connection at the transport layer; `latency` sleeps then serves the response.",
+          "additionalProperties": true,
+          "properties": {
+            "tcp": {
+              "type": "string",
+              "enum": ["CONNECTION_RESET_BY_PEER", "EMPTY_RESPONSE", "MALFORMED_RESPONSE_CHUNK", "RANDOM_DATA_THEN_CLOSE"]
+            },
+            "latency": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+                "ms": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

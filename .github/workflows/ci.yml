@@ -116,6 +116,9 @@ jobs:
       - name: Type-check and bundle
         run: npm run compile
 
+      - name: Validate Rift imposter JSON schema
+        run: npm run test:schema
+
       - name: Package extension (smoke test)
         run: npx @vscode/vsce package --out zio-bdd-ci-smoke.vsix --skip-license
 
