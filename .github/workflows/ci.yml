@@ -83,8 +83,8 @@ jobs:
           mkdir -p extensions/intellij/src/main/resources/bin
           sbt lsp/assembly
 
-      - name: Build and verify IntelliJ plugin
-        run: cd extensions/intellij && ./gradlew buildPlugin verifyPluginStructure --no-daemon
+      - name: Build, verify, and test IntelliJ plugin
+        run: cd extensions/intellij && ./gradlew buildPlugin verifyPluginStructure test --no-daemon
 
       - name: Upload plugin zip
         uses: actions/upload-artifact@v4
