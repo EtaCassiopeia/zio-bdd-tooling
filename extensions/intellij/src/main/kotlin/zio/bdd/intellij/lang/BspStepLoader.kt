@@ -6,6 +6,8 @@ import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.OrderEnumerator
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.TimeUnit
 
 /**
@@ -49,17 +51,45 @@ object BspStepLoader {
     }
 
     private fun findLoaderJar(): String? {
+        val resource = BspStepLoader::class.java.getResource("/bin/zio-bdd-lsp.jar") ?: return null
         val jar = File(System.getProperty("java.io.tmpdir"), "zio-bdd-lsp.jar")
-        if (jar.exists()) return jar.absolutePath
-        // Extract from plugin resources on first use (no longer relies on
-        // ZioBddLspServerDefinition being present to pre-populate tmpdir).
-        val stream = BspStepLoader::class.java.getResourceAsStream("/bin/zio-bdd-lsp.jar")
-            ?: return null
+        val bundledSize = try {
+            resource.openConnection().contentLengthLong
+        } catch (e: Exception) {
+            // Can't size the bundled resource — reuse whatever is extracted rather than
+            // re-copying a multi-MB jar every call, but leave a trace: this is the one
+            // path that could keep a stale jar after an update.
+            LOG.warn("BspStepLoader: could not read the bundled loader jar size; an existing copy will be reused", e)
+            -1L
+        }
+        // Reuse the extracted jar only when it matches the bundled resource. The old
+        // code returned any existing tmpdir jar forever, so a plugin update (which
+        // ships a new LSP jar) kept running the stale one — degrading step/mock
+        // intelligence with no signal (#43).
+        if (shouldReuseExtractedJar(jar.exists(), jar.length(), bundledSize)) return jar.absolutePath
+        // Extract to a temp file, then move into place, so a concurrent or
+        // interrupted extraction can never leave a torn jar at the target path.
+        val tmp = File.createTempFile("zio-bdd-lsp", ".jar", jar.parentFile)
         return try {
-            stream.use { it.copyTo(jar.outputStream()) }
+            resource.openStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            Files.move(tmp.toPath(), jar.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             jar.absolutePath.takeIf { jar.exists() }
-        } catch (_: Exception) { null }
+        } catch (e: Exception) {
+            LOG.warn("BspStepLoader: failed to extract the bundled loader jar", e)
+            null
+        } finally {
+            // No-op after a successful move; cleans up the multi-MB temp file if the
+            // copy/move failed, so a recurring failure can't accumulate junk in tmp.
+            Files.deleteIfExists(tmp.toPath())
+        }
     }
+
+    /** Whether the already-extracted loader jar may be reused: it must exist and
+     *  match the bundled resource's size (or the bundled size be indeterminate, to
+     *  avoid re-extracting the multi-MB jar on every call). A size mismatch means a
+     *  plugin update shipped a new jar and the stale copy must be replaced (#43). */
+    internal fun shouldReuseExtractedJar(jarExists: Boolean, jarSize: Long, bundledSize: Long): Boolean =
+        jarExists && (bundledSize < 0L || jarSize == bundledSize)
 
     private fun getTestClasspath(project: Project): List<String> =
         ModuleManager.getInstance(project).modules.flatMap<_, String> { module ->
