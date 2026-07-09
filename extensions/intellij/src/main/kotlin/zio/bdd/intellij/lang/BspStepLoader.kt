@@ -64,11 +64,33 @@ object BspStepLoader {
             val proc = ProcessBuilder(javaExecutable(), "-cp", cp, LOADER_MAIN)
                 .redirectErrorStream(false)
                 .start()
-            val output   = proc.inputStream.bufferedReader(Charsets.UTF_8).readText()
+            // Drain both stdout and stderr on their own threads: StepLoader logs a
+            // line per unloadable suite, and reading only stdout while stderr fills
+            // the OS pipe buffer deadlocks both sides (#40). Draining stdout on a
+            // thread too means waitFor (not a blocking read) bounds the call, so a
+            // child that stalls either stream still hits the timeout.
+            val out = StringBuilder()
+            val errTail = StringBuilder()
+            val outThread = drainer(proc.inputStream, out, bounded = false)
+            val errThread = drainer(proc.errorStream, errTail, bounded = true)
+            outThread.start()
+            errThread.start()
             val finished = proc.waitFor(TIMEOUT_SEC, TimeUnit.SECONDS)
-            if (!finished) { proc.destroyForcibly(); return null }
-            if (proc.exitValue() != 0) return null
-            val json = output.trim()
+            // On timeout, kill the child first so both streams reach EOF and the drain
+            // threads terminate before we read their buffers.
+            if (!finished) proc.destroyForcibly()
+            outThread.join(2000)
+            errThread.join(1000)
+            val tail = if (errTail.isBlank()) "" else "; stderr: ${errTail.trim()}"
+            if (!finished) {
+                LOG.warn("BspStepLoader: StepLoader subprocess timed out after ${TIMEOUT_SEC}s; falling back to static scan$tail")
+                return null
+            }
+            if (proc.exitValue() != 0) {
+                LOG.warn("BspStepLoader: StepLoader subprocess exited ${proc.exitValue()}; falling back to static scan$tail")
+                return null
+            }
+            val json = out.toString().trim()
             LoadResult(parseSteps(json), parseMocks(json))
         } catch (e: Exception) {
             // Fall back to static-scan step definitions (and an unchanged mock catalog),
@@ -77,6 +99,21 @@ object BspStepLoader {
             null
         }
     }
+
+    // Fully consume a stream on a daemon thread so the child never blocks writing
+    // to it. `bounded` caps retained text for the diagnostic stderr tail; stdout is
+    // read whole. A read failure is recorded in the buffer, not swallowed, so it
+    // surfaces in the eventual warning instead of silently killing the drain.
+    private fun drainer(stream: java.io.InputStream, buf: StringBuilder, bounded: Boolean): Thread =
+        Thread {
+            try {
+                stream.bufferedReader(Charsets.UTF_8).forEachLine { line ->
+                    if (!bounded || buf.length < 8192) buf.append(line).append('\n')
+                }
+            } catch (e: java.io.IOException) {
+                buf.append("[stream drain aborted: ${e.message}]")
+            }
+        }.apply { isDaemon = true }
 
     // StepLoader emits `{"steps":[…],"mocks":[…]}` with brace-free inner objects.
     // `\{[^{}]+\}` matches only the innermost objects (the envelope's outer brace
@@ -115,12 +152,36 @@ object BspStepLoader {
         }
     }
 
-    private fun unescape(s: String): String =
-        s.replace("\\\"", "\"")
-            .replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t")
-            .replace("\\\\", "\\")
+    // Single-pass unescaper. A chain of String.replace calls cannot decode this
+    // correctly: a real backslash is escaped to `\\` while a brace is escaped to a
+    // single-backslash `{` (#40), so `\\u007b` (an escaped backslash then the
+    // text u007b) is indistinguishable from the brace token under substring
+    // replacement. Scanning once, consuming each escape whole, removes the
+    // ambiguity and handles any `\uXXXX` uniformly.
+    private fun unescape(s: String): String {
+        val sb = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == '\\' && i + 1 < s.length) {
+                when (s[i + 1]) {
+                    '"' -> { sb.append('"'); i += 2 }
+                    'n' -> { sb.append('\n'); i += 2 }
+                    'r' -> { sb.append('\r'); i += 2 }
+                    't' -> { sb.append('\t'); i += 2 }
+                    '\\' -> { sb.append('\\'); i += 2 }
+                    'u' -> {
+                        val hex = if (i + 6 <= s.length) s.substring(i + 2, i + 6).toIntOrNull(16) else null
+                        if (hex != null) { sb.append(hex.toChar()); i += 6 } else { sb.append(c); i += 1 }
+                    }
+                    else -> { sb.append(c); i += 1 }
+                }
+            } else {
+                sb.append(c); i += 1
+            }
+        }
+        return sb.toString()
+    }
 
     private fun javaExecutable(): String {
         val home = System.getProperty("java.home") ?: return "java"

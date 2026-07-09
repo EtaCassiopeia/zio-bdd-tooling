@@ -50,12 +50,20 @@ object BspClassLoader:
         ZIO
           .attemptBlocking(runSubprocess(classpath, loaderJar))
           .flatMap {
-            case None    => ZIO.succeed(RuntimeLoadResult.empty)
-            case Some(j) => ZIO.succeed(RuntimeLoadResult(parseSteps(j), parseMocks(j)))
+            case Left(reason) =>
+              // A timeout / non-zero exit used to fall back to an empty result with
+              // no log, so runtime steps + the @mock catalog vanished silently (#40).
+              ZIO.logWarning(s"BspClassLoader: $reason; falling back to static scan") *>
+                ZIO.succeed(RuntimeLoadResult.empty)
+            case Right(j) => ZIO.succeed(RuntimeLoadResult(parseSteps(j), parseMocks(j)))
           }
-          .catchAllCause { c =>
-            ZIO.logWarningCause("BspClassLoader: subprocess failed; falling back to static scan", c) *>
-              ZIO.succeed(RuntimeLoadResult.empty)
+          .catchAllCause { cause =>
+            // Fall back only for genuine failures/defects; re-raise interruption
+            // (e.g. LSP shutdown) rather than masking it as an empty success.
+            if cause.isInterrupted then ZIO.interrupt
+            else
+              ZIO.logWarningCause("BspClassLoader: subprocess failed; falling back to static scan", cause) *>
+                ZIO.succeed(RuntimeLoadResult.empty)
           }
 
   // ── internals ─────────────────────────────────────────────────────────────
@@ -73,7 +81,7 @@ object BspClassLoader:
           .filter(_.endsWith(".jar"))
       }
 
-  private def runSubprocess(classpath: List[String], loaderJar: String): Option[String] =
+  private def runSubprocess(classpath: List[String], loaderJar: String): Either[String, String] =
     val cp = (classpath :+ loaderJar).mkString(java.io.File.pathSeparator)
     val pb = new ProcessBuilder(
       "java",
@@ -82,14 +90,55 @@ object BspClassLoader:
       "zio.bdd.lsp.bsp.StepLoader"
     )
     pb.redirectErrorStream(false)
-    val proc = pb.start()
-    val out  = scala.io.Source.fromInputStream(proc.getInputStream, "UTF-8").mkString
-    val ok   = proc.waitFor(30, TimeUnit.SECONDS)
-    if !ok then
-      proc.destroyForcibly()
-      None
-    else if proc.exitValue() != 0 then None
-    else Some(out.trim)
+    captureStdout(pb.start(), 30)
+
+  /**
+   * Drain both stdout and stderr on their own daemon threads, then wait with a
+   * deadline. StepLoader logs a `System.err` line per unloadable suite; reading
+   * only stdout while stderr fills the OS pipe buffer (~64KB) deadlocks both
+   * sides (#40). Draining stdout on a thread too means `waitFor` (not a
+   * blocking stream read) bounds the call, so a child that stalls *either*
+   * stream still hits the timeout instead of hanging forever. Returns
+   * `Right(json)` on a clean exit, or `Left(reason)` on timeout / non-zero exit
+   * so the caller can log why rather than silently emptying.
+   */
+  private[bsp] def captureStdout(proc: Process, timeoutSeconds: Int): Either[String, String] =
+    val out       = new StringBuilder
+    val errTail   = new StringBuilder
+    val outThread = drainer(proc.getInputStream, out, bounded = false)
+    val errThread = drainer(proc.getErrorStream, errTail, bounded = true)
+    outThread.start()
+    errThread.start()
+    val ok = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+    // On timeout, kill the child first so both streams reach EOF and the drain
+    // threads terminate — otherwise join() below would race their buffers.
+    if !ok then proc.destroyForcibly()
+    outThread.join(2000)
+    errThread.join(1000)
+    if !ok then Left(s"StepLoader subprocess timed out after ${timeoutSeconds}s${tailSuffix(errTail)}")
+    else if proc.exitValue() != 0 then Left(s"StepLoader subprocess exited ${proc.exitValue()}${tailSuffix(errTail)}")
+    else Right(out.toString.trim)
+
+  // Fully consume a stream (so the child never blocks writing to it) on a daemon
+  // thread. `bounded` caps retained text for the diagnostic stderr tail; stdout
+  // is read whole. A read failure is recorded in the buffer, not swallowed, so
+  // it surfaces in the eventual warning rather than vanishing.
+  private def drainer(in: java.io.InputStream, buf: StringBuilder, bounded: Boolean): Thread =
+    val t = new Thread(() =>
+      try
+        val reader = new java.io.BufferedReader(new java.io.InputStreamReader(in, "UTF-8"))
+        var line   = reader.readLine()
+        while line != null do
+          if !bounded || buf.length < 8192 then buf.append(line).append('\n')
+          line = reader.readLine()
+      catch case e: java.io.IOException => buf.append(s"[stream drain aborted: ${e.getMessage}]")
+      ()
+    )
+    t.setDaemon(true)
+    t
+
+  private def tailSuffix(errTail: StringBuilder): String =
+    if errTail.isEmpty then "" else s"; stderr: ${errTail.toString.trim}"
 
   // Minimal JSON object scanner — StepLoader emits `{"steps":[…],"mocks":[…]}`
   // where each inner object is brace-free. `\{[^{}]+\}` matches only the
@@ -124,9 +173,32 @@ object BspClassLoader:
         else None
       }
 
+  // Single-pass unescaper. A chain of String.replace calls cannot decode this
+  // correctly: a real backslash is escaped to `\\` while a brace is escaped to a
+  // single-backslash `\u007b` (#40), so `\\u007b` (an escaped backslash then the
+  // text u007b) is indistinguishable from the brace token under substring
+  // replacement. Scanning once, consuming each escape whole, removes the
+  // ambiguity and handles any `\uXXXX` uniformly.
   private def unescape(s: String): String =
-    s.replace("\\\"", "\"")
-      .replace("\\n", "\n")
-      .replace("\\r", "\r")
-      .replace("\\t", "\t")
-      .replace("\\\\", "\\")
+    val sb = new StringBuilder(s.length)
+    var i  = 0
+    while i < s.length do
+      val c = s.charAt(i)
+      if c == '\\' && i + 1 < s.length then
+        s.charAt(i + 1) match
+          case '"'  => sb.append('"'); i += 2
+          case 'n'  => sb.append('\n'); i += 2
+          case 'r'  => sb.append('\r'); i += 2
+          case 't'  => sb.append('\t'); i += 2
+          case '\\' => sb.append('\\'); i += 2
+          case 'u' if i + 6 <= s.length =>
+            val code =
+              try Some(Integer.parseInt(s.substring(i + 2, i + 6), 16))
+              catch case _: NumberFormatException => None
+            code match
+              case Some(cp) => sb.append(cp.toChar); i += 6
+              case None     => sb.append(c); i += 1
+          case _ => sb.append(c); i += 1
+      else
+        sb.append(c); i += 1
+    sb.toString

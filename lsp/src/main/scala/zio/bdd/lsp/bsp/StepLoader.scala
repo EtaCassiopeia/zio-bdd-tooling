@@ -283,4 +283,10 @@ object StepLoader:
       .replace("\n", "\\n")
       .replace("\r", "\\r")
       .replace("\t", "\\t")
+      // Encode braces as \uXXXX so a value like the regex quantifier `\d{3}`
+      // carries no literal `{`/`}` on the wire — the consumers' brace-blind
+      // `\{[^{}]+\}` object scanner would otherwise truncate the object and
+      // silently drop the entry (#40). Both parsers decode these back.
+      .replace("{", "\\u007b")
+      .replace("}", "\\u007d")
     s""""$escaped""""
