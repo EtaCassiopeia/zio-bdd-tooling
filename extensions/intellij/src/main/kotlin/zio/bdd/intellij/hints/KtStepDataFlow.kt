@@ -42,9 +42,9 @@ data class StepDataFlow(val reads: Set<DataRef>, val sets: Set<DataRef>) {
  * what it reads/sets from `ScenarioContext` and `Stage` (#61). A single body can
  * contribute several refs across both sources.
  *
- * Limitation (see #57): only usage written directly in the body is seen — access
- * inside helper `def`s the body calls is not. #63 (runtime observation) is the
- * precise, call-depth-aware upgrade. State-field *reads* are deferred to #62.
+ * State field reads are detected off a `ScenarioContext.get` binder (#62). Limitation (see #57):
+ * only usage written directly in the body is seen — access inside helper `def`s the body calls is
+ * not; #63 (runtime observation) is the precise, call-depth-aware upgrade.
  */
 object KtStepDataFlow {
 
@@ -62,6 +62,15 @@ object KtStepDataFlow {
 
     // A leading type constructor in a Stage.put argument, e.g. `FooEvent(x)` / `NativeSpec.Rift(j)`.
     private val LEADING_TYPE = Regex("""^\s*([A-Z][\w]*(?:\.[A-Z][\w]*)*)""")
+
+    // A ScenarioContext.get bound to a flatMap/map lambda param (`{ s =>`, `(s =>`, `{ (s: S) =>`).
+    private val CTX_GET_LAMBDA = Regex("""ScenarioContext\.get\s*\.(?:flatMap|map)\s*[({]\s*(?:\(\s*)?([a-z]\w*)""")
+
+    // A ScenarioContext.get bound in a for-comprehension (`s <- ScenarioContext.get`).
+    private val CTX_GET_FOR = Regex("""([a-z]\w*)\s*<-\s*ScenarioContext\.get""")
+
+    // A placeholder read: `ScenarioContext.get.map(_.field)` / `.flatMap(_.field)`.
+    private val CTX_GET_PLACEHOLDER = Regex("""ScenarioContext\.get\s*\.(?:flatMap|map)\s*\(\s*_\.([a-z]\w*)""")
 
     fun analyze(body: String): StepDataFlow {
         val reads = mutableSetOf<DataRef>()
@@ -81,7 +90,25 @@ object KtStepDataFlow {
             val open = body.indexOf('(', m.range.first)
             for (f in copyAssignedFields(body, open)) sets += DataRef.StateField(f)
         }
+        for (f in stateFieldReads(body)) reads += DataRef.StateField(f)
         return StepDataFlow(reads, sets)
+    }
+
+    /** State field reads: fields accessed off a binder bound to `ScenarioContext.get` (a flatMap/map
+     *  lambda param or a for-comprehension `<-`), plus `_.field` placeholder reads. Binder-scoped so
+     *  unrelated `x.field` accesses don't leak; `.copy` is a write, not a read. */
+    private fun stateFieldReads(body: String): List<String> {
+        val fields = LinkedHashSet<String>()
+        for (m in CTX_GET_PLACEHOLDER.findAll(body)) if (m.groupValues[1] != "copy") fields += m.groupValues[1]
+        val binders =
+            (CTX_GET_LAMBDA.findAll(body).map { it.groupValues[1] } + CTX_GET_FOR.findAll(body).map { it.groupValues[1] })
+                .toSet()
+        for (b in binders) {
+            for (m in Regex("""\b""" + b + """\.([a-z]\w*)""").findAll(body)) {
+                if (m.groupValues[1] != "copy") fields += m.groupValues[1]
+            }
+        }
+        return fields.toList()
     }
 
     /** The `{ … }` body text of the step registration on 0-based [line] of [content],
