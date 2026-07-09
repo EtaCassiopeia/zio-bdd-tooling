@@ -8,6 +8,7 @@ Language tooling for [zio-bdd](https://github.com/EtaCassiopeia/zio-bdd) — the
 - **Diagnostics** — unmatched steps highlighted with closest-match hints
 - **Go-to-definition** — Cmd+Click a step → jump to the Scala source line
 - **Hover** — parameter types and extractor names for matched steps
+- **Step data-flow hints** *(IntelliJ, off by default)* — an end-of-line hint showing what each step reads/sets from `ScenarioContext` (State) and `Stage`, e.g. `sets result, Stage[Sum]`. Best-effort static analysis of the matched step's body (inline usage only). Toggle in **Settings → Editor → Inlay Hints → zio-bdd**
 - **Completion** — step suggestions in `.feature` files; step skeletons in `.scala` files
 - **Quick-fix** — "Create step definition" generates a `{ ??? }` stub in the target Scala file
 - **Run configurations** — gutter ▶ icons and right-click → run a specific scenario (IntelliJ); Test Explorer integration (VS Code)
@@ -94,6 +95,7 @@ The IntelliJ plugin has a full native PSI implementation — no external plugins
 | Go-to-definition | Cmd+Click → Scala source line |
 | Completion | Step suggestions with typed parameter tab stops |
 | Hover docs | Keyword, display text, parameter table, source location |
+| Data-flow hints | End-of-line "sets …/reads …" inlay (State + Stage); off by default, toggle in Inlay Hints settings |
 | Quick-fix | "Create step definition" inserts a `{ ??? }` stub |
 | Gutter icons | ▶ on every Scenario/Feature line |
 | Run configurations | Right-click → run a specific scenario via sbt |
