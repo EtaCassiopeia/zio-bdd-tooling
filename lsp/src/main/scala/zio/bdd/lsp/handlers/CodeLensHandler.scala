@@ -29,8 +29,10 @@ object CodeLensHandler:
         case Left(_) => ZIO.succeed(Nil)
         case Right(feature) =>
           val path = uri.stripPrefix("file://")
-          index.suiteFilesForFeature(path).map { suiteFiles =>
-            val selector = suiteSelector(suiteFiles)
+          index.ownerSuiteForFeature(path).zipWith(index.suiteFilesForFeature(path)) { (owner, suiteFiles) =>
+            // Prefer the suite that declares this feature's directory (a single,
+            // correct target); fall back to step-match file names, then "*" (#49).
+            val selector = owner.map(o => s"*$o*").getOrElse(suiteSelector(suiteFiles))
             // A Scenario Outline is expanded by the parser into one Scenario per
             // Examples row, all sharing the outline's header line. Group by line so
             // each outline yields a run-outline lens (all rows) plus one lens per row.

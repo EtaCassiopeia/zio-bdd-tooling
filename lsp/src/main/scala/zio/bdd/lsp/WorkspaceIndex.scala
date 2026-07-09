@@ -28,7 +28,10 @@ final class WorkspaceIndex private (
   // The @mock(name) catalog is a workspace-global fact (it comes from the
   // compiled test classpath, not from any one file), so — unlike steps/features
   // — it is a single list, replaced wholesale on each BSP class-load.
-  mocksRef: Ref[List[RuntimeMockSummary]]
+  mocksRef: Ref[List[RuntimeMockSummary]],
+  // @Suite(featureDirs=...) declarations per Scala file — the authoritative
+  // feature→suite ownership used to target a run at one suite, not "*" (#49).
+  suitesRef: Ref[Map[String, List[SuiteDecl]]]
 ):
 
   def allSteps: UIO[List[StepDefinition]]     = stepsRef.get.map(_.values.flatten.toList)
@@ -40,7 +43,15 @@ final class WorkspaceIndex private (
   def setMocks(mocks: List[RuntimeMockSummary]): UIO[Unit] = mocksRef.set(mocks)
 
   def indexScalaFile(path: String, content: String): UIO[Unit] =
-    stepsRef.update(_.updated(path, StepExtractor.extractFromSource(content, path)))
+    stepsRef.update(_.updated(path, StepExtractor.extractFromSource(content, path))) *>
+      suitesRef.update(_.updated(path, SuiteExtractor.extractFromSource(content)))
+
+  /**
+   * The suite that owns [featurePath] via its `@Suite(featureDirs=...)`, if
+   * any.
+   */
+  def ownerSuiteForFeature(featurePath: String): UIO[Option[String]] =
+    suitesRef.get.map(m => SuiteExtractor.ownerFor(featurePath, m.values.flatten.toList))
 
   // Tags are keyed by path (like steps/features) so re-indexing a file replaces
   // its tag set and removeFile drops it — the workspace tag set never goes stale.
@@ -51,7 +62,8 @@ final class WorkspaceIndex private (
     storeFeature *> tagsRef.update(_.updated(path, WorkspaceIndex.scanTags(content)))
 
   def removeFile(path: String): UIO[Unit] =
-    stepsRef.update(_ - path) *> featuresRef.update(_ - path) *> tagsRef.update(_ - path)
+    stepsRef.update(_ - path) *> featuresRef.update(_ - path) *> tagsRef.update(_ - path) *>
+      suitesRef.update(_ - path)
 
   def findStep(keyword: String, text: String): UIO[StepMatcher.MatchResult] =
     allSteps.map(StepMatcher.find(keyword, text, _))
@@ -215,9 +227,10 @@ object WorkspaceIndex:
   val layer: ULayer[WorkspaceIndex] =
     ZLayer.fromZIO(
       for
-        s <- Ref.make(Map.empty[String, List[StepDefinition]])
-        f <- Ref.make(Map.empty[String, Feature])
-        t <- Ref.make(Map.empty[String, Set[String]])
-        m <- Ref.make(List.empty[RuntimeMockSummary])
-      yield WorkspaceIndex(s, f, t, m)
+        s  <- Ref.make(Map.empty[String, List[StepDefinition]])
+        f  <- Ref.make(Map.empty[String, Feature])
+        t  <- Ref.make(Map.empty[String, Set[String]])
+        m  <- Ref.make(List.empty[RuntimeMockSummary])
+        su <- Ref.make(Map.empty[String, List[SuiteDecl]])
+      yield WorkspaceIndex(s, f, t, m, su)
     )

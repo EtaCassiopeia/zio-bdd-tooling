@@ -351,6 +351,26 @@ object ZIOBddServerSpec extends ZIOSpecDefault:
           params  = jsonObject(docUri, Some("Addition table"))
           cmd    <- ZIO.fromCompletableFuture(server.buildRunCommand(params))
         yield assertTrue(cmd.contains("--scenario-name \\\"Addition table*\\\" --focused"))
+      },
+      test("targets the owning @Suite instead of fanning out via \"*\" (#49)") {
+        val doc =
+          """|Feature: Greeting
+             |  Scenario: Greet
+             |    Given a user
+             |""".stripMargin
+        // Distinct /work49 namespace so this suite doesn't leak into the sibling
+        // empty-index tests (and their /fake features don't match this suite's dir).
+        val suiteSrc = "@Suite(featureDirs = Array(\"/work49/features\"))\nobject GreetSuite extends ZIOSteps[Any, S]\n"
+        val docUri   = "file:///work49/features/greet.feature"
+        for
+          server <- makeServer
+          index  <- ZIO.service[WorkspaceIndex]
+          _      <- index.indexScalaFile("/work49/GreetSuite.scala", suiteSrc)
+          _      <- index.indexFeatureFile("/work49/features/greet.feature", doc)
+          _      <- server.putContent(docUri, doc)
+          params  = jsonObject(docUri, Some("Greet"))
+          cmd    <- ZIO.fromCompletableFuture(server.buildRunCommand(params))
+        yield assertTrue(cmd.contains("testOnly *GreetSuite* --"), !cmd.contains("testOnly * --"))
       }
     ),
     suite("completion capabilities")(
