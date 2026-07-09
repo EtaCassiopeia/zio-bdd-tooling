@@ -363,8 +363,11 @@ final class ZIOBddServer(
     val featurePath  = featureUri.stripPrefix("file://")
     dispatchGated(
       for
+        owner      <- index.ownerSuiteForFeature(featurePath)
         suiteFiles <- index.suiteFilesForFeature(featurePath)
-        selector    = handlers.CodeLensHandler.suiteSelector(suiteFiles)
+        // Prefer the suite that declares this feature's directory (a single, correct
+        // target) so the Test Explorer / sidebar run doesn't fan out via "*" (#49).
+        selector = owner.map(o => s"*$o*").getOrElse(handlers.CodeLensHandler.suiteSelector(suiteFiles))
         flags = scenarioName match
                   case Some(name) =>
                     val content = currentContent(featureUri) match

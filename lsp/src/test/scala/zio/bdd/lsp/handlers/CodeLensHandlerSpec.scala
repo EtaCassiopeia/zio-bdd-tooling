@@ -69,6 +69,51 @@ object CodeLensHandlerSpec extends ZIOSpecDefault:
         )
       }
     },
+    test("prefers the @Suite owner over the \"*\" fan-out (#49)") {
+      // A distinct /work path namespace keeps this suite out of the other tests'
+      // shared index (they assert the empty-index "*" fallback).
+      val suiteSrc =
+        """@Suite(featureDirs = Array("/work/features"))
+          |object GreetingSuite extends ZIOSteps[Any, S]
+          |""".stripMargin
+      for
+        index  <- ZIO.service[WorkspaceIndex]
+        _      <- index.indexScalaFile("/work/GreetingSuite.scala", suiteSrc)
+        lenses <- CodeLensHandler.codeLenses("file:///work/features/greeting.feature", feature, index)
+      yield {
+        val commands = lenses.map(_.getCommand.getArguments.get(0).toString)
+        assertTrue(
+          commands.forall(_.contains("testOnly *GreetingSuite* --")),
+          // No bare-"*" selector: the run must target the owning suite, not every suite.
+          commands.forall(c => !c.contains("testOnly * --"))
+        )
+      }
+    },
+    test("with no @Suite owner, narrows to the step-matching suite file rather than \"*\"") {
+      // Distinct /nosuite path + unique step text so this doesn't perturb the
+      // empty-index tests. No @Suite here → the file-based fallback must apply.
+      val stepsSrc =
+        """object WidgetSteps:
+          |  Given("a special widget exists") { ZIO.unit }
+          |""".stripMargin
+      val feat =
+        """Feature: Widgets
+          |  Scenario: See it
+          |    Given a special widget exists
+          |""".stripMargin
+      for
+        index  <- ZIO.service[WorkspaceIndex]
+        _      <- index.indexScalaFile("/nosuite/WidgetSteps.scala", stepsSrc)
+        _      <- index.indexFeatureFile("/nosuite/widgets.feature", feat)
+        lenses <- CodeLensHandler.codeLenses("file:///nosuite/widgets.feature", feat, index)
+      yield {
+        val commands = lenses.map(_.getCommand.getArguments.get(0).toString)
+        assertTrue(
+          commands.forall(_.contains("testOnly *WidgetSteps* --")),
+          commands.forall(c => !c.contains("testOnly * --"))
+        )
+      }
+    },
     test("single quotes in scenario names pass through unescaped (bash double-quoted context)") {
       val withQuote =
         """Feature: Greeting
