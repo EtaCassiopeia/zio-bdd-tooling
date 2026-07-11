@@ -97,6 +97,29 @@ const good = {
       },
     ],
   },
+  "inline Rhai script response via _rift.script.code": {
+    protocol: "http",
+    stubs: [
+      {
+        responses: [
+          {
+            _rift: {
+              script: { engine: "rhai", code: 'fn respond(ctx) { http(200, #{ ok: true }) }' },
+            },
+          },
+        ],
+      },
+    ],
+  },
+  "script registry via _rift.scripts + a response _rift.script.ref": {
+    protocol: "http",
+    _rift: { scripts: { failTwice: { file: "scripts/fail-twice.rhai" } } },
+    stubs: [{ responses: [{ _rift: { script: { ref: "failTwice" } } }] }],
+  },
+  "inline JavaScript script response via _rift.script": {
+    protocol: "http",
+    stubs: [{ responses: [{ _rift: { script: { engine: "javascript", code: "respond(ctx)" } } }] }],
+  },
 };
 
 // ── Rejects malformed imposters ─────────────────────────────────────────────
@@ -115,6 +138,18 @@ const bad = {
   "unknown tcp fault token": {
     protocol: "http",
     stubs: [{ responses: [{ is: { statusCode: 200 }, _rift: { fault: { tcp: "NOT_A_REAL_FAULT" } } }] }],
+  },
+  "script with neither code, file, nor ref": {
+    protocol: "http",
+    stubs: [{ responses: [{ _rift: { script: { engine: "rhai" } } }] }],
+  },
+  "script with both code and file (mutually exclusive)": {
+    protocol: "http",
+    stubs: [{ responses: [{ _rift: { script: { code: "pass()", file: "s.rhai" } } }] }],
+  },
+  "script with an unknown engine": {
+    protocol: "http",
+    stubs: [{ responses: [{ _rift: { script: { engine: "python", code: "pass()" } } }] }],
   },
 };
 

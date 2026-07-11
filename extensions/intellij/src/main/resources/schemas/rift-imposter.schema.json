@@ -118,6 +118,11 @@
       "description": "zio-bdd Rift imposter-level extensions.",
       "additionalProperties": true,
       "properties": {
+        "scripts": {
+          "type": "object",
+          "description": "Named script registry (Rift 0.13). Each entry is referenced by name from a response via `_rift.script.ref`. Registry entries use `code` or `file` (a `ref` may not chain to another `ref`).",
+          "additionalProperties": { "$ref": "#/definitions/riftScriptSource" }
+        },
         "flowState": {
           "type": "object",
           "description": "Backs declarative scenarios (rift#190): where per-flow FSM state lives and how a request's flow id is derived.",
@@ -133,11 +138,55 @@
         }
       }
     },
+    "riftScriptSource": {
+      "type": "object",
+      "description": "A script's source and engine (Rift 0.13). Exactly one of `code` or `file` must be set; `engine` is optional when it can be inferred from a `file` extension.",
+      "additionalProperties": true,
+      "properties": {
+        "engine": {
+          "type": "string",
+          "enum": ["rhai", "javascript"],
+          "description": "Scripting engine. Optional — inferred from a `file` extension (.rhai → rhai, .js → javascript) when omitted."
+        },
+        "code": { "type": "string", "description": "Inline script source." },
+        "file": {
+          "type": "string",
+          "description": "Path to a script file, resolved relative to the configfile/datadir (admin-API imposters resolve under --scripts-dir). Engine inferred from the extension."
+        }
+      },
+      "oneOf": [{ "required": ["code"] }, { "required": ["file"] }]
+    },
+    "riftScript": {
+      "type": "object",
+      "description": "A response script: inline `code`, a `file`, or a `ref` to an entry in the imposter's `_rift.scripts` registry — exactly one must be set.",
+      "additionalProperties": true,
+      "properties": {
+        "engine": {
+          "type": "string",
+          "enum": ["rhai", "javascript"],
+          "description": "Scripting engine. Optional — inferred from a `file` extension (.rhai → rhai, .js → javascript) when omitted."
+        },
+        "code": { "type": "string", "description": "Inline script source." },
+        "file": {
+          "type": "string",
+          "description": "Path to a script file; engine inferred from the extension."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Name of a script registered under the imposter's `_rift.scripts`. A `ref` may not point at another `ref`."
+        }
+      },
+      "oneOf": [{ "required": ["code"] }, { "required": ["file"] }, { "required": ["ref"] }]
+    },
     "riftResponseExt": {
       "type": "object",
       "description": "zio-bdd Rift response-level extensions.",
       "additionalProperties": true,
       "properties": {
+        "script": {
+          "description": "Dynamic response via a Rhai (built-in) or JavaScript (Boa) script (Rift 0.13). The script defines `respond(ctx)` — or a bare-expression body — returning a result constructor (`http(...)`, `delay(...)`, `pass()`, ...).",
+          "$ref": "#/definitions/riftScript"
+        },
         "fault": {
           "type": "object",
           "description": "Fault injection (rift#239). `tcp` aborts the connection at the transport layer; `latency` sleeps then serves the response.",
