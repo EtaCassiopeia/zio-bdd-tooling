@@ -6,6 +6,53 @@ object DataFlowSpec extends ZIOSpecDefault:
   import DataRef.*
 
   def spec = suite("StepDataFlow.analyze")(
+    test("a step that calls a same-file helper inherits the helper's reads/sets") {
+      val helpers = StepDataFlow.resolveHelpers(
+        """|  protected def lastResponse: IO[Throwable, LastResponse] =
+           |    Stage.get[LastResponse].mapError(e => new IllegalStateException(s"no response ($e)"))
+           |  protected def pendingRequest: UIO[PendingRequest] =
+           |    Stage.get[PendingRequest].orElseSucceed(PendingRequest())
+           |""".stripMargin
+      )
+      val readStep = StepDataFlow.analyze("lastResponse.flatMap(r => assertRepro(r.status == code))", helpers)
+      val setStep  = StepDataFlow.analyze("pendingRequest.flatMap(pr => Stage.put(pr.copy(body = Some(b))))", helpers)
+      assertTrue(
+        readStep.reads == Set[DataRef](StageType("LastResponse")),
+        setStep.reads == Set[DataRef](StageType("PendingRequest")),
+        setStep.sets.contains(StateField("body"))
+      )
+    },
+    test("helper resolution is transitive and cycle-safe") {
+      val helpers = StepDataFlow.resolveHelpers(
+        """|  def a: X = b *> Stage.put(Alpha())
+           |  def b: X = a *> Stage.get[Beta]
+           |""".stripMargin
+      )
+      // a -> sets Stage[Alpha] and (via b) reads Stage[Beta]; the a<->b cycle must not loop.
+      assertTrue(
+        helpers("a").sets.contains(StageType("Alpha")),
+        helpers("a").reads.contains(StageType("Beta"))
+      )
+    },
+    test("a val local to a step body does not sweep up other steps' Stage calls") {
+      // `val body` is captured as a member, but its span is bounded to its own line — it must not
+      // absorb the sibling `Stage.get[RawPayload]`, so a later step referencing `body` stays clean.
+      val helpers = StepDataFlow.resolveHelpers(
+        """|  Given("prepare") { _ =>
+           |    val body = readBody()
+           |    Stage.get[RawPayload]
+           |  }
+           |""".stripMargin
+      )
+      val df = StepDataFlow.analyze("ScenarioContext.update(_.copy(body = fresh))", helpers)
+      assertTrue(!df.reads.contains(StageType("RawPayload")), df.sets == Set[DataRef](StateField("body")))
+    },
+    test("a field-access with a helper's name is not mistaken for a helper call") {
+      val helpers = StepDataFlow.resolveHelpers("  def status: UIO[S] = Stage.get[Status]")
+      // `r.status` is a field read of `r`, not a call to the `status` helper — must not fold it in.
+      val df = StepDataFlow.analyze("lastResponse.flatMap(r => check(r.status))", helpers)
+      assertTrue(!df.reads.contains(StageType("Status")))
+    },
     test("state field reads via a named flatMap binder") {
       val df = StepDataFlow.analyze(
         "ScenarioContext.get.flatMap { state => Assertions.assertEquals(state.inputPath, expected) }"
