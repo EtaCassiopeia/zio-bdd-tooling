@@ -102,6 +102,7 @@
         <codeInsight.declarativeInlayProvider
                 language="ZioBddGherkin"
                 providerId="zio.bdd.stepDataFlow"
+                group="OTHER_GROUP"
                 implementationClass="zio.bdd.intellij.hints.ZioBddDataFlowInlayProvider"
                 isEnabledByDefault="false"
                 nameKey="inlay.zioBdd.stepDataFlow.name"
