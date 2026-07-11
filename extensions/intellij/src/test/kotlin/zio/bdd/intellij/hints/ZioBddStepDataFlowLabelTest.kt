@@ -57,6 +57,6 @@ class ZioBddStepDataFlowLabelTest {
 
     @Test
     fun nullWhenContentUnavailable() {
-        assertNull(ZioBddStepDataFlowLabel.compute("Given", "a fresh calculator", defs) { null })
+        assertNull(ZioBddStepDataFlowLabel.compute("Given", "a fresh calculator", defs, { null }))
     }
 }

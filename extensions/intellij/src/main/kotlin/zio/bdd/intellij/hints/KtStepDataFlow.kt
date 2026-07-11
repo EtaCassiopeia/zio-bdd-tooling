@@ -42,9 +42,10 @@ data class StepDataFlow(val reads: Set<DataRef>, val sets: Set<DataRef>) {
  * what it reads/sets from `ScenarioContext` and `Stage` (#61). A single body can
  * contribute several refs across both sources.
  *
- * State field reads are detected off a `ScenarioContext.get` binder (#62). Limitation (see #57):
- * only usage written directly in the body is seen — access inside helper `def`s the body calls is
- * not; #63 (runtime observation) is the precise, call-depth-aware upgrade.
+ * State field reads are detected off a `ScenarioContext.get` binder (#62), and calls to same-file
+ * helper `def`/`val`s fold in the helper's own reads/sets (#57 partial — see [resolveHelpers]).
+ * Limitation: helpers in other files/traits and deeper indirection are still unseen; #63 (runtime
+ * observation) is the precise, call-depth-aware upgrade.
  */
 object KtStepDataFlow {
 
@@ -72,6 +73,11 @@ object KtStepDataFlow {
     // A placeholder read: `ScenarioContext.get.map(_.field)` / `.flatMap(_.field)`.
     private val CTX_GET_PLACEHOLDER = Regex("""ScenarioContext\.get\s*\.(?:flatMap|map)\s*\(\s*_\.([a-z]\w*)""")
 
+    // A top-level `def`/`val`/`var` member — a candidate helper whose body may itself read/set.
+    private val MEMBER =
+        Regex("""(?m)^[ \t]*(?:(?:protected|private|final|override|implicit|inline|lazy)\s+)*(?:def|val|var)\s+([a-z]\w*)""")
+
+    /** The inline reads/sets written directly in [body] (no helper-call resolution). */
     fun analyze(body: String): StepDataFlow {
         val reads = mutableSetOf<DataRef>()
         val sets = mutableSetOf<DataRef>()
@@ -92,6 +98,75 @@ object KtStepDataFlow {
         }
         for (f in stateFieldReads(body)) reads += DataRef.StateField(f)
         return StepDataFlow(reads, sets)
+    }
+
+    /** [body]'s inline reads/sets, plus the reads/sets of any same-file helper `def`/`val` it calls
+     *  (from [helpers], built by [resolveHelpers]) — one common form of the #57 helper limitation
+     *  (a step whose Stage/State access is wrapped in a sibling `def lastResponse = Stage.get[…]`). */
+    fun analyze(body: String, helpers: Map<String, StepDataFlow>): StepDataFlow {
+        val inline = analyze(body)
+        if (helpers.isEmpty()) return inline
+        val reads = inline.reads.toMutableSet()
+        val sets = inline.sets.toMutableSet()
+        for (name in referencedNames(body, helpers.keys)) {
+            helpers.getValue(name).let { reads += it.reads; sets += it.sets }
+        }
+        return StepDataFlow(reads, sets)
+    }
+
+    /** Data-flow of each top-level helper `def`/`val` in [content], resolved transitively (a helper
+     *  that calls another helper inherits its reads/sets), with a cycle guard. Pass the result to
+     *  `analyze(body, helpers)` for each step body in the same file. */
+    fun resolveHelpers(content: String): Map<String, StepDataFlow> {
+        val members = MEMBER.findAll(content).toList()
+        if (members.isEmpty()) return emptyMap()
+        val bodies = LinkedHashMap<String, String>()
+        for (m in members) {
+            bodies[m.groupValues[1]] = content.substring(m.range.first, memberSpanEnd(content, m.range.first))
+        }
+        val names = bodies.keys
+        val memo = HashMap<String, StepDataFlow>()
+        fun resolve(name: String, stack: Set<String>): StepDataFlow {
+            memo[name]?.let { return it }
+            if (name in stack) return StepDataFlow(emptySet(), emptySet())
+            val body = bodies[name] ?: ""
+            val inline = analyze(body)
+            val reads = inline.reads.toMutableSet()
+            val sets = inline.sets.toMutableSet()
+            for (ref in referencedNames(body, names)) {
+                if (ref == name) continue
+                resolve(ref, stack + name).let { reads += it.reads; sets += it.sets }
+            }
+            return StepDataFlow(reads, sets).also { memo[name] = it }
+        }
+        return names.associateWith { resolve(it, emptySet()) }
+    }
+
+    /** Names from [candidates] used as a standalone identifier in [body] — not as a field access
+     *  (`x.name`) or part of a longer identifier — so helper calls match but `r.status` does not. */
+    private fun referencedNames(body: String, candidates: Set<String>): Set<String> =
+        candidates.filterTo(mutableSetOf()) { Regex("""(?<![.\w])""" + it + """(?![\w])""").containsMatchIn(body) }
+
+    /** End index (exclusive) of the member starting at [start]: its signature line plus the following
+     *  strictly-more-indented lines (its body). Bounds each helper to its own body so a `val` local to
+     *  a step lambda can't sweep up unrelated steps' Stage/State calls. */
+    private fun memberSpanEnd(content: String, start: Int): Int {
+        var k = start
+        while (k < content.length && (content[k] == ' ' || content[k] == '\t')) k++
+        val indent = k - start
+        var i = content.indexOf('\n', start)
+        if (i < 0) return content.length
+        i += 1
+        while (i < content.length) {
+            var j = i
+            while (j < content.length && (content[j] == ' ' || content[j] == '\t')) j++
+            val blank = j >= content.length || content[j] == '\n'
+            if (!blank && (j - i) <= indent) return i
+            val nl = content.indexOf('\n', i)
+            if (nl < 0) return content.length
+            i = nl + 1
+        }
+        return content.length
     }
 
     /** State field reads: fields accessed off a binder bound to `ScenarioContext.get` (a flatMap/map

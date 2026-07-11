@@ -28,6 +28,9 @@ object StepExtractor:
     """(?m)^[ \t]*(Given|When|Then|And|But|GivenS|WhenS|ThenS|AndS|ButS)[ \t]*\(""".r
 
   def extractFromSource(content: String, filePath: String): List[StepDefinition] =
+    // Resolve sibling helper `def`/`val` data-flow once so each step that calls a helper
+    // (e.g. `def lastResponse = Stage.get[LastResponse]`) inherits its reads/sets (#57 partial).
+    val helpers = StepDataFlow.resolveHelpers(content)
     stepCallRe
       .findAllMatchIn(content)
       .flatMap { m =>
@@ -35,7 +38,8 @@ object StepExtractor:
         val startPos           = m.end
         val (exprText, endPos) = extractExpr(content, startPos)
         val lineNo             = content.take(m.start).count(_ == '\n')
-        val flow               = StepDataFlow.bodyAfter(content, endPos).map(StepDataFlow.analyze).getOrElse(DataFlow.empty)
+        val flow =
+          StepDataFlow.bodyAfter(content, endPos).map(StepDataFlow.analyze(_, helpers)).getOrElse(DataFlow.empty)
         parseExpr(kw, exprText, filePath, lineNo, flow)
       }
       .toList

@@ -59,6 +59,57 @@ class KtStepDataFlowTest {
     }
 
     @Test
+    fun stepCallingASameFileHelperInheritsItsReadsAndSets() {
+        val helpers = KtStepDataFlow.resolveHelpers(
+            """
+            |  protected def lastResponse: IO[Throwable, LastResponse] =
+            |    Stage.get[LastResponse].mapError(e => new IllegalStateException("no response"))
+            |  protected def pendingRequest: UIO[PendingRequest] =
+            |    Stage.get[PendingRequest].orElseSucceed(PendingRequest())
+            """.trimMargin(),
+        )
+        val readStep = KtStepDataFlow.analyze("lastResponse.flatMap(r => assertRepro(r.status == code))", helpers)
+        val setStep = KtStepDataFlow.analyze("pendingRequest.flatMap(pr => Stage.put(pr.copy(body = Some(b))))", helpers)
+        assertEquals(setOf(DataRef.StageType("LastResponse")), readStep.reads)
+        assertEquals(setOf(DataRef.StageType("PendingRequest")), setStep.reads)
+        assertTrue(setStep.sets.contains(DataRef.StateField("body")))
+    }
+
+    @Test
+    fun helperResolutionIsTransitiveAndCycleSafe() {
+        val helpers = KtStepDataFlow.resolveHelpers(
+            """
+            |  def a: X = b *> Stage.put(Alpha())
+            |  def b: X = a *> Stage.get[Beta]
+            """.trimMargin(),
+        )
+        assertTrue(helpers.getValue("a").sets.contains(DataRef.StageType("Alpha")))
+        assertTrue(helpers.getValue("a").reads.contains(DataRef.StageType("Beta")))
+    }
+
+    @Test
+    fun aValLocalToAStepBodyDoesNotSweepUpOtherStagesCalls() {
+        val helpers = KtStepDataFlow.resolveHelpers(
+            """
+            |  Given("prepare") { _ =>
+            |    val body = readBody()
+            |    Stage.get[RawPayload]
+            |  }
+            """.trimMargin(),
+        )
+        val df = KtStepDataFlow.analyze("ScenarioContext.update(_.copy(body = fresh))", helpers)
+        assertTrue(!df.reads.contains(DataRef.StageType("RawPayload")))
+        assertEquals(setOf(DataRef.StateField("body")), df.sets)
+    }
+
+    @Test
+    fun aFieldAccessWithAHelpersNameIsNotAHelperCall() {
+        val helpers = KtStepDataFlow.resolveHelpers("  def status: UIO[S] = Stage.get[Status]")
+        val df = KtStepDataFlow.analyze("lastResponse.flatMap(r => check(r.status))", helpers)
+        assertTrue(!df.reads.contains(DataRef.StageType("Status")))
+    }
+
+    @Test
     fun detectsMultipleStateFieldSetsFromOneCopy() {
         val df = KtStepDataFlow.analyze("ScenarioContext.update(_.copy(result = a + b, failed = false))")
         assertEquals(setOf(DataRef.StateField("result"), DataRef.StateField("failed")), df.sets)

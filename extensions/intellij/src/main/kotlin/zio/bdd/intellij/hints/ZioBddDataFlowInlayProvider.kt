@@ -34,6 +34,12 @@ object ZioBddStepDataFlowLabel {
         stepText: String,
         defs: List<KtStepDefinition>,
         readContent: (String) -> String?,
+        // Sibling helper `def`/`val` data-flow for a definition file, so a step that reads/sets via a
+        // helper (e.g. `def lastResponse = Stage.get[LastResponse]`) still shows the hint (#57 partial).
+        // Defaulted for tests; the collector passes a per-file-memoized resolver.
+        readHelpers: (String) -> Map<String, StepDataFlow> = { path ->
+            readContent(path)?.let { KtStepDataFlow.resolveHelpers(it) } ?: emptyMap()
+        },
     ): String? {
         if (stepText.isBlank()) return null
         val match = ZioBddStepMatcher.candidatesFor(keyword, defs)
@@ -41,7 +47,7 @@ object ZioBddStepDataFlowLabel {
             ?: return null
         val content = readContent(match.file) ?: return null
         val body = KtStepDataFlow.bodyAt(content, match.line) ?: return null
-        return KtStepDataFlow.analyze(body).render()
+        return KtStepDataFlow.analyze(body, readHelpers(match.file)).render()
     }
 }
 
@@ -63,8 +69,12 @@ class ZioBddDataFlowInlayProvider : InlayHintsProvider {
         private val document: Document,
     ) : SharedBypassCollector {
 
-        // Definition-file text is stable across a single collection pass; memoize per file.
+        // Definition-file text and its resolved helpers are stable across a collection pass; memoize
+        // per file so a feature with many steps in one definition file resolves helpers only once.
         private val contentCache = HashMap<String, String?>()
+        private val helpersCache = HashMap<String, Map<String, StepDataFlow>>()
+
+        private fun contentOf(path: String): String? = contentCache.getOrPut(path) { readDocument(path) }
 
         override fun collectFromElement(element: PsiElement, sink: InlayTreeSink) {
             val step = element as? ZioBddStep ?: return
@@ -76,7 +86,9 @@ class ZioBddDataFlowInlayProvider : InlayHintsProvider {
                 step.getKeyword(),
                 step.getStepText(),
                 defs,
-            ) { path -> contentCache.getOrPut(path) { readDocument(path) } } ?: return
+                ::contentOf,
+            ) { path -> helpersCache.getOrPut(path) { contentOf(path)?.let { KtStepDataFlow.resolveHelpers(it) } ?: emptyMap() } }
+                ?: return
 
             val offset = step.textRange.startOffset
             if (offset < 0 || offset > document.textLength) return
